@@ -95,28 +95,7 @@ Credentials are written to `~/.local/share/gmessages-omarchy/session.json`
 (mode `0600`) and reused on every later start. A session is only written once
 pairing actually completes.
 
-### Uninstall
-
-```bash
-make uninstall
-```
-
-That disables and removes the systemd unit, deletes the daemon binary, and
-removes the plugin directory. It deliberately leaves your credentials and
-cache in place; remove those too with:
-
-```bash
-rm -rf ~/.local/share/gmessages-omarchy ~/.cache/gmessages-omarchy
-```
-
-Also revoke the device from your phone under **Messages → ⋮ → Device pairing**.
-
-Nothing outside `~/.config/omarchy/plugins/marcford.gmessages/`,
-`~/.local/bin/gmessagesd`, and `~/.config/systemd/user/gmessagesd.service` is
-written by the installer. Enabling the widget edits your bar layout, but only
-through `omarchy plugin enable`, which is Omarchy's own tooling.
-
-## Pairing from a terminal
+### Pairing from a terminal
 
 Equivalent, and useful when the panel cannot start:
 
