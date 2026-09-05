@@ -43,6 +43,11 @@ Panel {
   property bool sendingMedia: false
   property var browserProfiles: []
   property bool profilePickerOpen: false
+  // Which message currently has its reaction bar open; empty for none.
+  property string reactingTo: ""
+  // The set Google Messages accepts. Anything else is sent as a custom emoji,
+  // which not every recipient can render, so the picker offers only these.
+  readonly property var reactionChoices: ["\u{1F44D}", "\u{2764}\u{FE0F}", "\u{1F602}", "\u{1F62E}", "\u{1F625}", "\u{1F620}", "\u{1F44E}"]
   property int countdown: 0
   property bool capturing: false
   property string capturePath: ""
@@ -130,6 +135,7 @@ Panel {
     if (id === root.selectedConvID) return
     root.emojiPickerOpen = false
     root.cameraOpen = false
+    root.reactingTo = ""
     root.pendingAttachment = ""
     root.selectedConvID = id
     root.messages = []
@@ -258,6 +264,24 @@ Panel {
   signal scrollRequested()
 
   function scrollToBottom() { root.scrollRequested() }
+
+  // ---- reactions ----
+
+  // Toggling is decided by the daemon: the same emoji again removes it, a
+  // different one switches. Passing an empty emoji removes whatever is set.
+  function react(messageID, emoji) {
+    root.reactingTo = ""
+    if (root.selectedConvID === "" || !messageID) return
+    gm.call("react", {
+      conversationID: root.selectedConvID,
+      messageID: messageID,
+      emoji: emoji || ""
+    }, function(ok, res) {
+      if (!ok) root.threadError = String(res)
+      // The updated message arrives as a push event, so there is nothing to
+      // apply locally; a failure is the only thing worth reporting.
+    })
+  }
 
   // ---- attachments ----
 
@@ -1443,10 +1467,65 @@ Panel {
           font.pixelSize: Style.font.caption
         }
 
+        // Reaction picker for this message.
+        Rectangle {
+          visible: rowRoot.msg && root.reactingTo === rowRoot.msg.id
+          width: reactionRow.implicitWidth + Style.space(10)
+          height: visible ? Style.space(26) : 0
+          radius: height / 2
+          color: Color.popups.background
+          border.width: 1
+          border.color: Color.popups.border
+
+          Row {
+            id: reactionRow
+            anchors.centerIn: parent
+            spacing: Style.space(4)
+
+            Repeater {
+              model: root.reactionChoices
+
+              delegate: Rectangle {
+                id: choice
+                required property var modelData
+                width: Style.space(20)
+                height: Style.space(20)
+                radius: width / 2
+                color: choiceHover.containsMouse
+                  ? Style.hoverFillFor(root.foreground, Color.accent) : "transparent"
+
+                Text {
+                  anchors.centerIn: parent
+                  text: choice.modelData
+                  font.pixelSize: Style.space(13)
+                  font.family: root.fontFamily
+                }
+
+                MouseArea {
+                  id: choiceHover
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.react(rowRoot.msg.id, choice.modelData)
+                }
+              }
+            }
+          }
+        }
+
         Rectangle {
           width: parent.width
           height: bubbleContent.implicitHeight + Style.space(16)
           radius: Style.space(10)
+
+          // Sits behind the content so it never swallows clicks meant for
+          // links, images, or the reaction chips.
+          MouseArea {
+            id: bubbleHover
+            anchors.fill: parent
+            hoverEnabled: true
+            acceptedButtons: Qt.NoButton
+          }
           color: rowRoot.mine
             ? Style.selectedFillFor(root.foreground, Color.accent)
             : Style.normalFillFor(root.foreground, Color.accent)
@@ -1577,14 +1656,60 @@ Panel {
                 font.pixelSize: Style.font.caption
               }
 
+              // Existing reactions. Clicking your own takes it back; clicking
+              // someone else's adds yours alongside.
               Repeater {
                 model: rowRoot.msg && rowRoot.msg.reactions ? rowRoot.msg.reactions : []
-                delegate: Text {
+
+                delegate: Rectangle {
+                  id: reactionChip
                   required property var modelData
-                  text: modelData.emoji + (modelData.count > 1 ? " " + modelData.count : "")
-                  color: root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
+                  width: chipText.implicitWidth + Style.space(8)
+                  height: Style.space(16)
+                  radius: height / 2
+                  color: modelData.mine
+                    ? Style.selectedFillFor(root.foreground, Color.accent)
+                    : (chipHover.containsMouse ? Style.hoverFillFor(root.foreground, Color.accent) : "transparent")
+                  border.width: modelData.mine ? 1 : 0
+                  border.color: Color.accent
+
+                  Text {
+                    id: chipText
+                    anchors.centerIn: parent
+                    text: reactionChip.modelData.emoji
+                      + (reactionChip.modelData.count > 1 ? " " + reactionChip.modelData.count : "")
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+
+                  MouseArea {
+                    id: chipHover
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.react(rowRoot.msg.id, reactionChip.modelData.emoji)
+                  }
+                }
+              }
+
+              // React affordance: only on hover, so it does not clutter a
+              // thread at rest.
+              Text {
+                visible: (bubbleHover.containsMouse || root.reactingTo === (rowRoot.msg ? rowRoot.msg.id : ""))
+                  && rowRoot.msg && !rowRoot.msg.pending && !rowRoot.msg.deleted
+                text: "\u{263A}+"
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+
+                MouseArea {
+                  anchors.fill: parent
+                  anchors.margins: -Style.space(4)
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.reactingTo =
+                    root.reactingTo === rowRoot.msg.id ? "" : rowRoot.msg.id
                 }
               }
             }

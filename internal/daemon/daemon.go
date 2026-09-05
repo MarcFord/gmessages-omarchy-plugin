@@ -38,7 +38,13 @@ type Daemon struct {
 	media   *mediaCache
 	avatars *avatarStore
 	config  *store.ConfigStore
-	cookies cookieRefresher
+
+	// Reactions carry the participant IDs that left them, which is the only
+	// way to tell whether one of them is the user's own — and that decides
+	// whether tapping an emoji adds, removes, or switches.
+	reactMu   sync.RWMutex
+	reactions map[string][]reactionRecord
+	cookies   cookieRefresher
 
 	// Maintenance starts either after a stored session connects or after a
 	// fresh pairing, whichever happens first, and must run exactly once. It is
@@ -66,14 +72,15 @@ type Daemon struct {
 // New builds a daemon around already-resolved paths.
 func New(log zerolog.Logger, paths *store.Paths) *Daemon {
 	return &Daemon{
-		log:     log,
-		paths:   paths,
-		convs:   make(map[string]wire.Conversation),
-		selfIDs: make(map[string]bool),
-		subs:    make(map[chan wire.Event]struct{}),
-		media:   newMediaCache(paths.MediaDir()),
-		avatars: newAvatarStore(paths.MediaDir()),
-		config:  store.NewConfigStore(paths.ConfigFile()),
+		log:       log,
+		paths:     paths,
+		convs:     make(map[string]wire.Conversation),
+		selfIDs:   make(map[string]bool),
+		subs:      make(map[chan wire.Event]struct{}),
+		media:     newMediaCache(paths.MediaDir()),
+		avatars:   newAvatarStore(paths.MediaDir()),
+		config:    store.NewConfigStore(paths.ConfigFile()),
+		reactions: make(map[string][]reactionRecord),
 		// PhoneOK starts true: it is only ever falsified by an explicit
 		// PhoneNotResponding event. Starting false meant the bar read
 		// "Phone not responding" forever, because the event that clears it
@@ -361,7 +368,9 @@ func (d *Daemon) handleMessage(msg *gmproto.Message) {
 	// Attachment decryption keys only ever arrive attached to a message, so
 	// harvest them on the way past; Media() needs them later, on demand.
 	d.media.record(msg)
+	d.recordReactions(msg)
 	m := convertMessage(msg, d.senderName(msg))
+	d.markMyReactions(m.ConversationID, &m)
 	d.publish(wire.EventMessage, m)
 	// The conversation list preview and unread dot both derive from
 	// conversation events, but those can lag behind the message itself.

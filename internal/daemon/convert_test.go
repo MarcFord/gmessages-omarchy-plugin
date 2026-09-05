@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"go.mau.fi/mautrix-gmessages/pkg/libgm"
+
+	"github.com/MarcFord/gmessages-omarchy-plugin/internal/wire"
 	"go.mau.fi/mautrix-gmessages/pkg/libgm/gmproto"
 	"google.golang.org/protobuf/proto"
 )
@@ -308,5 +310,73 @@ func TestChangedCookiesNamesOnly(t *testing.T) {
 	auth.SetCookies(map[string]string{"SID": "x"})
 	if got := changedCookies(auth, map[string]string{"SID": "x"}); len(got) != 0 {
 		t.Errorf("identical cookies should report no change, got %v", got)
+	}
+}
+
+func TestMyReactionOnIdentifiesOwnReaction(t *testing.T) {
+	d := &Daemon{
+		convs:     map[string]wire.Conversation{},
+		reactions: map[string][]reactionRecord{},
+	}
+	d.convs["c1"] = wire.Conversation{
+		ID:         "c1",
+		OutgoingID: "me",
+		Participants: []wire.Participant{
+			{ID: "me", IsMe: true},
+			{ID: "them", IsMe: false},
+		},
+	}
+	d.reactions["m1"] = []reactionRecord{
+		{emoji: "\U0001F44D", participants: []string{"them"}},
+		{emoji: "❤️", participants: []string{"them", "me"}},
+	}
+
+	// The heart is the user's; the thumbs up belongs to someone else.
+	if got := d.myReactionOn("c1", "m1"); got != "❤️" {
+		t.Errorf("myReactionOn = %q, want the heart", got)
+	}
+	// A message with no reactions must not report one.
+	if got := d.myReactionOn("c1", "m2"); got != "" {
+		t.Errorf("expected no reaction, got %q", got)
+	}
+	// An unknown conversation must not panic or guess.
+	if got := d.myReactionOn("nope", "m1"); got != "" {
+		t.Errorf("expected no reaction for unknown conversation, got %q", got)
+	}
+}
+
+func TestMarkMyReactionsFlagsOnlyMine(t *testing.T) {
+	d := &Daemon{
+		convs:     map[string]wire.Conversation{},
+		reactions: map[string][]reactionRecord{},
+	}
+	d.convs["c1"] = wire.Conversation{ID: "c1", OutgoingID: "me"}
+	d.reactions["m1"] = []reactionRecord{
+		{emoji: "\U0001F602", participants: []string{"me"}},
+	}
+
+	m := wire.Message{ID: "m1", ConversationID: "c1", Reactions: []wire.Reaction{
+		{Emoji: "\U0001F602", Count: 2},
+		{Emoji: "\U0001F44D", Count: 1},
+	}}
+	d.markMyReactions("c1", &m)
+
+	if !m.Reactions[0].Mine {
+		t.Error("the laugh is the user's own and should be flagged")
+	}
+	if m.Reactions[1].Mine {
+		t.Error("the thumbs up is not the user's and must not be flagged")
+	}
+}
+
+func TestRecordReactionsClearsWhenRemoved(t *testing.T) {
+	d := &Daemon{reactions: map[string][]reactionRecord{}}
+	d.reactions["m1"] = []reactionRecord{{emoji: "x", participants: []string{"me"}}}
+
+	// A message update with no reactions means they were all removed; a stale
+	// entry here would make a later tap send REMOVE for something gone.
+	d.recordReactions(&gmproto.Message{MessageID: "m1"})
+	if _, ok := d.reactions["m1"]; ok {
+		t.Error("reactions should be cleared when a message reports none")
 	}
 }

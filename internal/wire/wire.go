@@ -55,6 +55,7 @@ const (
 	MethodPickImage       = "pickImage"
 	MethodListProfiles    = "listProfiles"
 	MethodSetProfile      = "setProfile"
+	MethodReact           = "react"
 	MethodUnpair          = "unpair"
 	MethodMedia           = "media"
 	MethodAvatar          = "avatar"
@@ -162,10 +163,33 @@ type Message struct {
 	ReplyToID   string       `json:"replyToID,omitempty"`
 }
 
-// Reaction is an emoji reaction with its count.
+// Reaction is an emoji reaction with its count. Mine drives the toggle: the
+// same emoji tapped twice removes it, a different one switches.
 type Reaction struct {
 	Emoji string `json:"emoji"`
 	Count int    `json:"count"`
+	Mine  bool   `json:"mine"`
+}
+
+// ReactParams toggles a reaction on a message. An empty Emoji removes whatever
+// reaction the user currently has.
+type ReactParams struct {
+	ConversationID string `json:"conversationID"`
+	MessageID      string `json:"messageID"`
+	Emoji          string `json:"emoji"`
+}
+
+// SupportedReactions is the set Google Messages accepts. Anything else is sent
+// as a custom emoji, which not every recipient can render, so the UI offers
+// only these.
+var SupportedReactions = []string{
+	"\U0001F44D",   // thumbs up
+	"\u2764\uFE0F", // red heart
+	"\U0001F602",   // laugh
+	"\U0001F62E",   // surprised
+	"\U0001F625",   // sad
+	"\U0001F620",   // angry
+	"\U0001F44E",   // thumbs down
 }
 
 // --- Request params ---

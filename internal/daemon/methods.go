@@ -77,7 +77,10 @@ func (d *Daemon) Messages(ctx context.Context, p wire.MessagesParams) (*wire.Mes
 	// The API returns newest-first; the view renders oldest-first.
 	for i := len(msgs) - 1; i >= 0; i-- {
 		d.media.record(msgs[i])
-		out.Messages = append(out.Messages, convertMessage(msgs[i], d.senderName(msgs[i])))
+		d.recordReactions(msgs[i])
+		converted := convertMessage(msgs[i], d.senderName(msgs[i]))
+		d.markMyReactions(p.ConversationID, &converted)
+		out.Messages = append(out.Messages, converted)
 	}
 	if cur := resp.GetCursor(); cur != nil {
 		out.CursorID = cur.GetLastItemID()
