@@ -1526,6 +1526,53 @@ Panel {
             hoverEnabled: true
             acceptedButtons: Qt.NoButton
           }
+
+          // React button, pinned to the bubble's outer corner and drawn above
+          // the content. It used to be a glyph tacked onto the timestamp row,
+          // which is a small target and, on a tall photo, nowhere near where
+          // the pointer actually is. An overlay with its own z is reachable
+          // whatever the bubble contains or however large it grows.
+          Rectangle {
+            id: reactButton
+            z: 5
+            // Always present rather than hover-gated. Hover over a large
+            // image proved unreliable — the button simply never appeared on a
+            // photo — and a control you cannot find is worse than a faint one.
+            // It stays dim until pointed at.
+            visible: rowRoot.msg !== null && !rowRoot.msg.pending && !rowRoot.msg.deleted
+            opacity: reactButtonHover.containsMouse || root.reactingTo === rowRoot.msg.id
+              ? 1.0
+              : (bubbleHover.containsMouse ? 0.85 : 0.25)
+            anchors.verticalCenter: parent.top
+            anchors.left: rowRoot.mine ? parent.left : undefined
+            anchors.right: rowRoot.mine ? undefined : parent.right
+            anchors.leftMargin: -Style.space(8)
+            anchors.rightMargin: -Style.space(8)
+            width: Style.space(22)
+            height: Style.space(22)
+            radius: width / 2
+            color: reactButtonHover.containsMouse
+              ? Style.selectedFillFor(root.foreground, Color.accent)
+              : Color.popups.background
+            border.width: 1
+            border.color: Color.popups.border
+
+            Text {
+              anchors.centerIn: parent
+              text: "\u{1F642}"
+              font.pixelSize: Style.space(11)
+            }
+
+            MouseArea {
+              id: reactButtonHover
+              anchors.fill: parent
+              anchors.margins: -Style.space(4)
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.reactingTo =
+                root.reactingTo === rowRoot.msg.id ? "" : rowRoot.msg.id
+            }
+          }
           color: rowRoot.mine
             ? Style.selectedFillFor(root.foreground, Color.accent)
             : Style.normalFillFor(root.foreground, Color.accent)
@@ -1693,25 +1740,6 @@ Panel {
                 }
               }
 
-              // React affordance: only on hover, so it does not clutter a
-              // thread at rest.
-              Text {
-                visible: (bubbleHover.containsMouse || root.reactingTo === (rowRoot.msg ? rowRoot.msg.id : ""))
-                  && rowRoot.msg && !rowRoot.msg.pending && !rowRoot.msg.deleted
-                text: "\u{263A}+"
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-
-                MouseArea {
-                  anchors.fill: parent
-                  anchors.margins: -Style.space(4)
-                  hoverEnabled: true
-                  cursorShape: Qt.PointingHandCursor
-                  onClicked: root.reactingTo =
-                    root.reactingTo === rowRoot.msg.id ? "" : rowRoot.msg.id
-                }
-              }
             }
           }
         }

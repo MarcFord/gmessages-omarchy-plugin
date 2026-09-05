@@ -140,7 +140,7 @@ Three buttons sit left of the message box:
 | 📷 | Open the webcam with a live preview and a shutter button |
 | 🙂 | Emoji picker — search by name, inserts at the cursor |
 
-Hover a message to reveal a **☺+** button and pick a reaction. Tapping the same
+Each message carries a faint 🙂 button at its corner; click it and pick a reaction. Tapping the same
 emoji again takes it back, a different one switches; your own reaction is
 outlined. Only the seven emoji Google Messages supports are offered — anything
 else is sent as a custom emoji that not every recipient can render.
