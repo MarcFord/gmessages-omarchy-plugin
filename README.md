@@ -1,0 +1,264 @@
+# Google Messages for Omarchy
+
+Read and reply to Google Messages from the Omarchy bar — an unread badge in the
+bar, and a panel with your conversation list, full thread history, inline
+images, and a composer.
+
+![status: alpha](https://img.shields.io/badge/status-alpha-orange)
+
+## Why it works this way
+
+The obvious design — embed `messages.google.com/web` in a web view inside the
+bar — is not possible. Omarchy's shell is a single long-running Quickshell
+process that also owns the bar, notifications, the OSD, and **the lock
+screen**. Quickshell never calls `QtWebEngineQuick::initialize()`, so creating
+a `WebEngineView` inside it aborts the whole process:
+
+```
+FATAL: Argument list is empty, the program name is not passed to
+QCoreApplication. base::CommandLine cannot be properly initialized.
+```
+
+That is not a recoverable widget error; it takes the desktop shell down with
+it. So this plugin does not embed a browser. Instead:
+
+```
+┌──────────────────────┐   NDJSON over    ┌────────────────────────┐
+│  Quickshell plugin   │◄──unix socket───►│      gmessagesd        │
+│  (bar widget + panel)│                  │  Go daemon, libgm      │
+└──────────────────────┘                  └───────────┬────────────┘
+                                                      │ Google Messages
+                                                      │ web protocol
+                                                ┌─────▼─────┐
+                                                │ Your phone │
+                                                └───────────┘
+```
+
+`gmessagesd` speaks the real Google Messages web protocol using
+[`libgm`](https://pkg.go.dev/go.mau.fi/mautrix-gmessages/pkg/libgm) from the
+mautrix project, and exposes a small JSON API. The QML side is pure UI — it
+holds one socket and renders what the daemon pushes.
+
+## Requirements
+
+- Omarchy with the Quickshell shell (`omarchy-shell`)
+- Go 1.24+ to build
+- `qrencode` for the pairing QR code
+- An Android phone running Google Messages, reachable on the network
+
+## Install
+
+```bash
+git clone https://github.com/MarcFord/gmessages-omarchy-plugin
+cd gmessages-omarchy-plugin
+make install
+systemctl --user enable --now gmessagesd
+omarchy plugin enable marcford.gmessages
+```
+
+`make install` puts the daemon in `~/.local/bin`, the plugin in
+`~/.config/omarchy/plugins/marcford.gmessages/`, and a user unit in
+`~/.config/systemd/user/`.
+
+To install as a plugin repo instead:
+
+```bash
+omarchy plugin add https://github.com/MarcFord/gmessages-omarchy-plugin.git
+```
+
+You still need the daemon built and running — the QML alone does nothing.
+
+## Pairing
+
+Click the bar icon and press **Pair with Google**. That is the whole flow —
+no terminal required.
+
+The daemon finds a browser profile you are signed in to, reads the Google
+session cookies from it, and starts pairing. The panel then shows a single
+large emoji; Google Messages on your phone shows several, and you tap the one
+that matches. It expires after about a minute.
+
+**You must have opened https://messages.google.com/web in that browser at
+least once and let it load.** The `OSID` cookie is issued by
+messages.google.com itself and is absent until you do — signing in to Google
+generally is not enough. If that is the problem the panel says so and names
+the profile it looked at.
+
+Newer Google Messages builds have removed the QR scanner entirely, which is
+why the account flow is the default. **Use a QR code** remains available for
+older phones.
+
+Credentials are written to `~/.local/share/gmessages-omarchy/session.json`
+(mode `0600`) and reused on every later start. A session is only written once
+pairing actually completes.
+
+### Pairing from a terminal
+
+Equivalent, and useful when the panel cannot start:
+
+```bash
+gmessagesd pair --from-browser     # read cookies automatically
+gmessagesd pair                    # paste a "Copy as cURL" from devtools
+```
+
+To unpair: press **Unpair** in the panel, delete the session file, or revoke
+the device from your phone.
+
+## Configuration
+
+Settings live in the bar widget entry in `~/.config/omarchy/shell.json`, and
+are editable from **Setup → Plugins**:
+
+| Key           | Default              | Meaning                                     |
+|---------------|----------------------|---------------------------------------------|
+| `autostart`   | `true`               | Try to start the systemd unit if unreachable |
+| `serviceName` | `gmessagesd.service` | Unit to start when `autostart` is on         |
+
+## Files
+
+| Path                                        | Contents                            |
+|---------------------------------------------|-------------------------------------|
+| `~/.local/share/gmessages-omarchy/session.json` | Pairing credentials — **secret** |
+| `~/.local/share/gmessages-omarchy/config.json`  | Preferences (chosen browser profile) |
+| `~/.cache/gmessages-omarchy/media/`         | Downloaded attachments              |
+| `~/.cache/gmessages-omarchy/webcam-*.jpg`   | Photos taken with the webcam        |
+| `$XDG_RUNTIME_DIR/gmessages-omarchy/daemon.sock` | Plugin ↔ daemon socket         |
+
+## Using it
+
+Click the bar icon to open the panel. Pick a conversation on the left, read the
+thread on the right, type in the composer and press Enter (or Send).
+
+Three buttons sit left of the message box:
+
+| Button | What it does |
+|--------|--------------|
+| 📎 | Pick an image from disk, via your desktop's own file chooser |
+| 📷 | Open the webcam with a live preview and a shutter button |
+| 🙂 | Emoji picker — search by name, inserts at the cursor |
+
+Attachments are staged before they go anywhere: you see the image, can add a
+caption, and nothing is sent until you press **Send image**.
+
+The file chooser runs through `xdg-desktop-portal`, so it is the same dialog
+the rest of your desktop uses and works correctly under Wayland.
+
+The webcam shoots via a separate `ffmpeg` process after a 3-second countdown,
+and the photo is shown for approval before anything is sent. There is no live
+preview, and that is deliberate — see below.
+
+Set `cameraDevice` if your webcam is not `/dev/video0`.
+
+The emoji picker reads Omarchy's own catalogue, so the set and its search
+keywords match the rest of the desktop.
+
+## Why there is no live camera preview
+
+The first version used QtMultimedia's `Camera` and `VideoOutput`, which do work
+in a standalone Quickshell instance. Inside the real Omarchy shell they
+segfault:
+
+```
+Signal: Segmentation fault (11)
+#1  libffmpegmediaplugin.so
+```
+
+The Omarchy shell is one process that also owns the bar, notifications, and
+**the lock screen**, so a crash in a media backend takes the desktop with it —
+the same reason this plugin cannot embed a web view. Capture therefore runs as
+a child `ffmpeg` process, where a crash can only kill the child.
+
+The first frames are discarded before the shot, because webcams need a moment
+to auto-expose and frame zero is usually black.
+
+## Staying paired
+
+Two credentials keep a session alive, and only one looks after itself:
+
+- **The auth token** refreshes on its own. libgm signs a refresh with the
+  stored ECDSA key about an hour before expiry, needing no cookies. This is
+  not what goes stale.
+- **The Google cookies** do not. Every request is authenticated with a
+  `SAPISIDHASH` derived from them, and Google rotates `__Secure-1PSIDTS`
+  continuously as you use the browser. A snapshot taken at pairing time drifts
+  from the browser's copy until Google rejects the session with
+  `SESSION_COOKIE_INVALID` — which retrying cannot fix, because it needs a new
+  pairing.
+
+So the daemon re-syncs cookies from your browser profile every 15 minutes and
+persists the session every 10, rather than waiting for a failure. If a request
+does fail authentication it refreshes cookies and retries; if the session is
+already gone it re-pairs itself, which is silent once your account trusts the
+device.
+
+The practical consequence: **stay signed in to Google in the browser profile
+you paired from.** If you sign out there, the daemon loses its source of fresh
+cookies and you will eventually have to pair again.
+
+### Choosing a browser profile
+
+By default the daemon picks the most recently used profile that has a complete
+cookie set. That is a guess, and wrong as soon as you keep several Google
+accounts in separate profiles.
+
+The pairing screen lists every profile it can see, with whether each is usable
+and why not:
+
+```
+✓  Chrome / Profile 1     7 cookies — ready
+•  Chrome / Default       Signed in to Google, but not to Messages.
+•  Chromium / Default     no Google cookies could be read
+```
+
+Press **Change** to pin one, or **Choose automatically** to go back to the
+default behaviour. The choice is stored in
+`~/.local/share/gmessages-omarchy/config.json` and is honoured by the
+background cookie sync too, so it keeps working with no panel open.
+
+## Deliberate limits
+
+- **No desktop notifications.** Your phone and any other paired client already
+  notify you; a third source is noise. The bar badge is the signal.
+- **Images only for outgoing attachments.** Sending pictures (from disk or the
+  webcam) works; video and audio are not wired up yet. Incoming media of any
+  type still downloads.
+- **Inbox only, 50 conversations.** This is a bar popup, not an archive
+  browser.
+
+## Caveats worth knowing
+
+- `libgm` is a **reverse-engineered** client. Google can break it without
+  notice; when they do, this plugin stops working until libgm is updated.
+- Pairing consumes one of your limited *Messages for web* device slots.
+- RCS and end-to-end encrypted chats are relayed **through your phone**, which
+  must stay online. When the phone is unreachable the panel says so.
+- Messages are decrypted on this machine to be displayed. Attachments sit in
+  the cache directory until you clear it.
+
+## Development
+
+```bash
+make build           # build bin/gmessagesd
+make test            # go test ./...
+make lint            # go vet + qmllint
+./bin/gmessagesd --log-level debug --socket /tmp/gm.sock
+```
+
+The wire protocol is defined in [`internal/wire/wire.go`](internal/wire/wire.go).
+You can drive the daemon by hand:
+
+```bash
+printf '{"id":"1","method":"status"}\n' | socat - UNIX-CONNECT:/tmp/gm.sock
+```
+
+QML changes under `~/.config/omarchy/plugins/` hot-reload on save. If a change
+does not take, force it with `omarchy-shell shell rescanPlugins`.
+
+## Credits
+
+Protocol work is entirely the [mautrix](https://github.com/mautrix/gmessages)
+project's. This repo is a desktop client and an Omarchy plugin around it.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

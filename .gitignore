@@ -1,0 +1,15 @@
+# Build output
+bin/
+
+# Runtime artifacts and credentials. The daemon writes these under
+# ~/.local/share and ~/.cache, never into the repo, but keep them out by name
+# in case anyone runs the daemon from a checkout.
+*.sock
+session.json
+config.json
+cookies.json
+*.qslog
+
+# Captured or downloaded media
+webcam-*.jpg
+pairing-qr.png

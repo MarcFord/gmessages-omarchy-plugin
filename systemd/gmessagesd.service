@@ -1,0 +1,27 @@
+[Unit]
+Description=Google Messages daemon for the Omarchy bar plugin
+Documentation=https://github.com/MarcFord/gmessages-omarchy-plugin
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/gmessagesd
+Restart=on-failure
+RestartSec=5s
+
+# The session file is paired-device credentials and the cache holds message
+# attachments; keep both away from the rest of the system.
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/share/gmessages-omarchy %h/.cache/gmessages-omarchy
+ReadWritePaths=%t/gmessages-omarchy
+NoNewPrivileges=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+MemoryDenyWriteExecute=yes
+
+[Install]
+WantedBy=default.target
