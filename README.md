@@ -10,40 +10,6 @@ images, and a composer.
 ![The panel: conversation list, threaded history with an inline image, and the composer](preview.png)
 
 *Screenshot uses synthetic data.*
-
-## Why it works this way
-
-The obvious design — embed `messages.google.com/web` in a web view inside the
-bar — is not possible. Omarchy's shell is a single long-running Quickshell
-process that also owns the bar, notifications, the OSD, and **the lock
-screen**. Quickshell never calls `QtWebEngineQuick::initialize()`, so creating
-a `WebEngineView` inside it aborts the whole process:
-
-```
-FATAL: Argument list is empty, the program name is not passed to
-QCoreApplication. base::CommandLine cannot be properly initialized.
-```
-
-That is not a recoverable widget error; it takes the desktop shell down with
-it. So this plugin does not embed a browser. Instead:
-
-```
-┌──────────────────────┐   NDJSON over    ┌────────────────────────┐
-│  Quickshell plugin   │◄──unix socket───►│      gmessagesd        │
-│  (bar widget + panel)│                  │  Go daemon, libgm      │
-└──────────────────────┘                  └───────────┬────────────┘
-                                                      │ Google Messages
-                                                      │ web protocol
-                                                ┌─────▼─────┐
-                                                │ Your phone │
-                                                └───────────┘
-```
-
-`gmessagesd` speaks the real Google Messages web protocol using
-[`libgm`](https://pkg.go.dev/go.mau.fi/mautrix-gmessages/pkg/libgm) from the
-mautrix project, and exposes a small JSON API. The QML side is pure UI — it
-holds one socket and renders what the daemon pushes.
-
 ## Requirements
 
 - Omarchy with the Quickshell shell (`omarchy-shell`)
@@ -227,6 +193,40 @@ background cookie sync too, so it keeps working with no panel open.
 
 ## Deliberate limits
 
+### Why it works this way
+
+The obvious design — embed `messages.google.com/web` in a web view inside the
+bar — is not possible. Omarchy's shell is a single long-running Quickshell
+process that also owns the bar, notifications, the OSD, and **the lock
+screen**. Quickshell never calls `QtWebEngineQuick::initialize()`, so creating
+a `WebEngineView` inside it aborts the whole process:
+
+```
+FATAL: Argument list is empty, the program name is not passed to
+QCoreApplication. base::CommandLine cannot be properly initialized.
+```
+
+That is not a recoverable widget error; it takes the desktop shell down with
+it. So this plugin does not embed a browser. Instead:
+
+```
+┌──────────────────────┐   NDJSON over    ┌────────────────────────┐
+│  Quickshell plugin   │◄──unix socket───►│      gmessagesd        │
+│  (bar widget + panel)│                  │  Go daemon, libgm      │
+└──────────────────────┘                  └───────────┬────────────┘
+                                                      │ Google Messages
+                                                      │ web protocol
+                                                ┌─────▼─────┐
+                                                │ Your phone │
+                                                └───────────┘
+```
+
+`gmessagesd` speaks the real Google Messages web protocol using
+[`libgm`](https://pkg.go.dev/go.mau.fi/mautrix-gmessages/pkg/libgm) from the
+mautrix project, and exposes a small JSON API. The QML side is pure UI — it
+holds one socket and renders what the daemon pushes.
+
+
 - **No desktop notifications.** Your phone and any other paired client already
   notify you; a third source is noise. The bar badge is the signal.
 - **Images only for outgoing attachments.** Sending pictures (from disk or the
@@ -235,7 +235,7 @@ background cookie sync too, so it keeps working with no panel open.
 - **Inbox only, 50 conversations.** This is a bar popup, not an archive
   browser.
 
-## Caveats worth knowing
+### Caveats worth knowing
 
 - `libgm` is a **reverse-engineered** client. Google can break it without
   notice; when they do, this plugin stops working until libgm is updated.
