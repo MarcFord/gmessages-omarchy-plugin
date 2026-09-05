@@ -6,6 +6,10 @@ images, and a composer.
 
 ![status: alpha](https://img.shields.io/badge/status-alpha-orange)
 
+![The panel: conversation list, threaded history with an inline image, and the composer](preview.png)
+
+*Screenshot uses synthetic data.*
+
 ## Why it works this way
 
 The obvious design — embed `messages.google.com/web` in a web view inside the
