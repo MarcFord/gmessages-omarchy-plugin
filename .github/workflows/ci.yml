@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # Track the version the module declares rather than pinning twice.
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build ./...
+
+      # -race matters here: the daemon fans events out to one goroutine per
+      # connection while libgm callbacks mutate shared state from another.
+      - name: Test
+        run: go test -race ./...
+
+  qml:
+    name: QML
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt QML tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qt6-declarative-dev-tools
+
+      # qmlformat is used as a parser: it fails on a syntax error, which is the
+      # class of mistake that otherwise only shows up as a silent no-op at
+      # runtime. qmllint is deliberately not used — without Quickshell and the
+      # Omarchy qs.* modules present it cannot resolve the imports, so it
+      # reports nothing useful.
+      - name: Parse QML
+        run: |
+          qmlformat=""
+          for candidate in qmlformat qmlformat6 /usr/lib/qt6/bin/qmlformat; do
+            if command -v "$candidate" >/dev/null 2>&1; then qmlformat="$candidate"; break; fi
+          done
+          if [ -z "$qmlformat" ]; then
+            echo "qmlformat not found; checked qmlformat, qmlformat6, /usr/lib/qt6/bin/qmlformat"
+            exit 1
+          fi
+          echo "Using $qmlformat"
+          status=0
+          for f in *.qml; do
+            if "$qmlformat" "$f" >/dev/null; then
+              echo "ok    $f"
+            else
+              echo "FAIL  $f"
+              status=1
+            fi
+          done
+          exit $status

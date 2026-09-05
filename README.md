@@ -5,6 +5,7 @@ bar, and a panel with your conversation list, full thread history, inline
 images, and a composer.
 
 ![status: alpha](https://img.shields.io/badge/status-alpha-orange)
+[![CI](https://github.com/MarcFord/gmessages-omarchy-plugin/actions/workflows/ci.yml/badge.svg)](https://github.com/MarcFord/gmessages-omarchy-plugin/actions/workflows/ci.yml)
 
 ![The panel: conversation list, threaded history with an inline image, and the composer](preview.png)
 
@@ -252,6 +253,12 @@ make test            # go test ./...
 make lint            # go vet + qmllint
 ./bin/gmessagesd --log-level debug --socket /tmp/gm.sock
 ```
+
+CI runs `gofmt`, `go vet`, a build, and `go test -race` on every push, plus a
+QML syntax check. It cannot do more than that: the interesting behaviour needs
+a running Quickshell, a paired phone, and a signed-in browser, none of which
+exist on a runner. Treat a green tick as "it compiles and the pure logic
+holds", not as "it works".
 
 The wire protocol is defined in [`internal/wire/wire.go`](internal/wire/wire.go).
 You can drive the daemon by hand:
