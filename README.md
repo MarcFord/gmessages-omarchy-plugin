@@ -13,9 +13,20 @@ images, and a composer.
 ## Requirements
 
 - Omarchy with the Quickshell shell (`omarchy-shell`)
-- Go 1.24+ to build
-- `qrencode` for the pairing QR code
 - An Android phone running Google Messages, reachable on the network
+- A Chromium-family browser (Chrome, Chromium, or Brave) signed in to Google
+  Messages — this is where pairing credentials come from
+- Go 1.27+ to build the daemon
+
+Runtime tools, all of which a typical Omarchy install already has:
+
+| Tool | Used for | Without it |
+|------|----------|-----------|
+| `sqlite3` | reading the browser cookie database | pairing cannot read cookies |
+| `secret-tool` (libsecret) | the browser's cookie encryption key | pairing cannot decrypt cookies |
+| `xdg-desktop-portal` | the "attach an image" file chooser | the 📎 button does nothing |
+| `ffmpeg` | webcam capture | the 📷 button reports a failure |
+| `qrencode` | the legacy QR pairing fallback | only the QR path is affected |
 
 ## Install
 
@@ -38,6 +49,27 @@ omarchy plugin add https://github.com/MarcFord/gmessages-omarchy-plugin.git
 ```
 
 You still need the daemon built and running — the QML alone does nothing.
+
+## Uninstall
+
+```bash
+make uninstall
+```
+
+That disables and removes the systemd unit, deletes the daemon binary, and
+removes the plugin directory. It deliberately leaves your credentials and
+cache in place; remove those too with:
+
+```bash
+rm -rf ~/.local/share/gmessages-omarchy ~/.cache/gmessages-omarchy
+```
+
+Also revoke the device from your phone under **Messages → ⋮ → Device pairing**.
+
+Nothing outside `~/.config/omarchy/plugins/marcford.gmessages/`,
+`~/.local/bin/gmessagesd`, and `~/.config/systemd/user/gmessagesd.service` is
+written by the installer. Enabling the widget edits your bar layout, but only
+through `omarchy plugin enable`, which is Omarchy's own tooling.
 
 ## Pairing
 
@@ -63,7 +95,28 @@ Credentials are written to `~/.local/share/gmessages-omarchy/session.json`
 (mode `0600`) and reused on every later start. A session is only written once
 pairing actually completes.
 
-### Pairing from a terminal
+### Uninstall
+
+```bash
+make uninstall
+```
+
+That disables and removes the systemd unit, deletes the daemon binary, and
+removes the plugin directory. It deliberately leaves your credentials and
+cache in place; remove those too with:
+
+```bash
+rm -rf ~/.local/share/gmessages-omarchy ~/.cache/gmessages-omarchy
+```
+
+Also revoke the device from your phone under **Messages → ⋮ → Device pairing**.
+
+Nothing outside `~/.config/omarchy/plugins/marcford.gmessages/`,
+`~/.local/bin/gmessagesd`, and `~/.config/systemd/user/gmessagesd.service` is
+written by the installer. Enabling the widget edits your bar layout, but only
+through `omarchy plugin enable`, which is Omarchy's own tooling.
+
+## Pairing from a terminal
 
 Equivalent, and useful when the panel cannot start:
 
