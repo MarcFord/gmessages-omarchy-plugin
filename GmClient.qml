@@ -14,7 +14,7 @@ Item {
   property bool autostart: true
   property string serviceName: "gmessagesd.service"
 
-  readonly property bool connected: sock.connected
+  readonly property bool connected: sockLoader.item ? sockLoader.item.connected : false
 
   // Mirrors wire.Status. Kept as a plain object so bindings see whole-object
   // replacement rather than partial mutation.
@@ -39,7 +39,8 @@ Item {
   // answers. Calls made while disconnected fail fast rather than queue, so
   // the UI never shows a spinner that cannot resolve.
   function call(method, params, callback) {
-    if (!sock.connected) {
+    var s = sockLoader.item
+    if (!s || !s.connected) {
       if (callback) callback(false, "not connected to gmessagesd")
       return
     }
@@ -47,8 +48,8 @@ Item {
     if (callback) _pending[id] = callback
     var frame = { id: id, method: method }
     if (params !== undefined && params !== null) frame.params = params
-    sock.write(JSON.stringify(frame) + "\n")
-    sock.flush()
+    s.write(JSON.stringify(frame) + "\n")
+    s.flush()
   }
 
   function refreshConversations() {
@@ -57,45 +58,61 @@ Item {
     })
   }
 
-  function reconnect() {
-    sock.connected = false
-    sock.connected = true
+  function reconnect() { _recreateSocket() }
+
+  // A Quickshell Socket is single-use: once a connect attempt has failed it is
+  // inert. Assigning connected again, or clearing and restoring path, produces
+  // no further attempt and not even an error -- verified against a server that
+  // was started while the socket was retrying. Building a new object is the
+  // only thing that actually tries again, so the socket lives in a Loader that
+  // gets cycled.
+  function _recreateSocket() {
+    sockLoader.active = false
+    sockLoader.active = true
   }
 
   // ---- transport ----
 
-  Socket {
-    id: sock
-    path: root.socketPath
-    connected: root.socketPath !== ""
+  Component {
+    id: sockComponent
 
-    parser: SplitParser {
-      splitMarker: "\n"
-      onRead: function(line) { root._handleLine(line) }
-    }
+    Socket {
+      path: root.socketPath
+      connected: root.socketPath !== ""
 
-    onConnectionStateChanged: {
-      if (connected) {
-        root._triedAutostart = false
-        root.call("status", null, function(ok, res) { if (ok && res) root.status = res })
-        root.refreshConversations()
-        reconnectTimer.stop()
-        reconnectTimer.interval = 1000
-      } else {
-        // Drop callbacks that can never be answered now.
-        root._pending = ({})
-        root.status = { state: "disconnected", unread: 0, phoneOK: false, qrURL: "", error: "" }
-        reconnectTimer.start()
+      parser: SplitParser {
+        splitMarker: "\n"
+        onRead: function(line) { root._handleLine(line) }
+      }
+
+      onConnectionStateChanged: {
+        if (connected) {
+          root._triedAutostart = false
+          reconnectTimer.stop()
+          reconnectTimer.interval = 1000
+          root.call("status", null, function(ok, res) { if (ok && res) root.status = res })
+          root.refreshConversations()
+        } else {
+          // Drop callbacks that can never be answered now.
+          root._pending = ({})
+          root.status = { state: "disconnected", unread: 0, phoneOK: false, qrURL: "", error: "" }
+          reconnectTimer.start()
+        }
+      }
+
+      onError: function(err) {
+        root.transportError("socket error: " + err)
+        if (root.autostart && !root._triedAutostart) {
+          root._triedAutostart = true
+          startService.running = true
+        }
       }
     }
+  }
 
-    onError: function(err) {
-      root.transportError("socket error: " + err)
-      if (root.autostart && !root._triedAutostart) {
-        root._triedAutostart = true
-        startService.running = true
-      }
-    }
+  Loader {
+    id: sockLoader
+    sourceComponent: sockComponent
   }
 
   Process {
@@ -104,34 +121,39 @@ Item {
     onExited: reconnectTimer.start()
   }
 
-  // This has to keep firing on its own. A connect attempt that fails leaves the
-  // socket where it already was -- disconnected -- so connectionState does not
-  // change, onConnectionStateChanged never runs, and nothing else would re-arm
-  // the timer. With repeat: false that made the client give up after a single
-  // attempt: a shell started while the daemon was down (an empty runtime dir on
-  // the first boot after install, say) stayed dead until the shell itself was
-  // restarted, even once the daemon came back.
+  // Keeps rebuilding the socket until one of them connects. This has to repeat
+  // on its own: a failed connect leaves the socket disconnected, which is where
+  // it already was, so connectionState never changes and onConnectionStateChanged
+  // never runs to re-arm anything. Without this the client gave up after a
+  // single attempt and a shell started while the daemon was down stayed dead
+  // until the shell itself was restarted.
   //
-  // Back off up to 30s so a daemon that is down for hours costs almost nothing,
-  // while a daemon that restarts is picked up within a second or two.
+  // Backs off to 30s so a daemon that is down for hours costs almost nothing,
+  // while one that restarts is picked up within a second or two.
   Timer {
     id: reconnectTimer
     interval: 1000
     repeat: true
     onTriggered: {
-      if (sock.connected || root.socketPath === "") {
+      if (root.connected || root.socketPath === "") {
         stop()
         interval = 1000
         return
       }
-      if (interval < 30000) interval = Math.min(interval * 2, 30000)
-      sock.connected = true
+      if (interval < 30000) {
+        interval = Math.min(interval * 2, 30000)
+      } else {
+        // Once backed off fully, let autostart have another go: the daemon may
+        // have been stopped rather than crashed, and nothing else would start it.
+        root._triedAutostart = false
+      }
+      root._recreateSocket()
     }
   }
 
-  // Start retrying even if the very first connect fails before anything above
-  // is wired up; the timer stops itself as soon as it is connected.
-  Component.onCompleted: if (!sock.connected) reconnectTimer.start()
+  // Arm the retry even if the very first connect fails before anything above is
+  // wired up. The timer stops itself as soon as a socket connects.
+  Component.onCompleted: if (!root.connected) reconnectTimer.start()
 
   function _handleLine(line) {
     if (!line || line.length === 0) return
