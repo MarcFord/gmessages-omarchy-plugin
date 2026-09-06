@@ -18,6 +18,10 @@ type Config struct {
 	// reported by the browser scan (e.g. "Chrome / Profile 1"). Empty means
 	// choose automatically.
 	BrowserProfile string `json:"browserProfile,omitempty"`
+
+	// GiphyAPIKey enables GIF search. GIPHY issues free keys; without one the
+	// GIF picker explains how to get it rather than failing silently.
+	GiphyAPIKey string `json:"giphyApiKey,omitempty"`
 }
 
 // ConfigStore reads and writes the config file.
@@ -58,8 +62,22 @@ func (c *ConfigStore) Get() Config {
 func (c *ConfigStore) SetBrowserProfile(name string) error {
 	c.mu.Lock()
 	c.loaded.BrowserProfile = name
-	current := c.loaded
 	c.mu.Unlock()
+	return c.save()
+}
+
+// SetGiphyAPIKey stores the GIF search key.
+func (c *ConfigStore) SetGiphyAPIKey(key string) error {
+	c.mu.Lock()
+	c.loaded.GiphyAPIKey = key
+	c.mu.Unlock()
+	return c.save()
+}
+
+func (c *ConfigStore) save() error {
+	c.mu.RLock()
+	current := c.loaded
+	c.mu.RUnlock()
 
 	tmp := c.path + ".tmp"
 	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)

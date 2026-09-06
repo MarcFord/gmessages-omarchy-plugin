@@ -57,6 +57,9 @@ const (
 	MethodSetProfile      = "setProfile"
 	MethodReact           = "react"
 	MethodDiscardCapture  = "discardCapture"
+	MethodGifSearch       = "gifSearch"
+	MethodGifFetch        = "gifFetch"
+	MethodSetGiphyKey     = "setGiphyKey"
 	MethodUnpair          = "unpair"
 	MethodMedia           = "media"
 	MethodAvatar          = "avatar"
@@ -254,6 +257,40 @@ type BrowserProfile struct {
 // SetProfileParams chooses a profile by name; empty means automatic.
 type SetProfileParams struct {
 	Name string `json:"name"`
+}
+
+// Gif is one search result. PreviewURL is a small looping rendition for the
+// grid; SendURL is the one actually sent, kept under a few megabytes so
+// carriers do not reject it.
+type Gif struct {
+	ID            string `json:"id"`
+	Title         string `json:"title,omitempty"`
+	PreviewURL    string `json:"previewURL"`
+	PreviewWidth  int    `json:"previewWidth"`
+	PreviewHeight int    `json:"previewHeight"`
+	SendURL       string `json:"sendURL"`
+}
+
+type GifSearchParams struct {
+	Query string `json:"query"`
+	Limit int    `json:"limit,omitempty"`
+}
+
+// GifSearchResult reports whether a key is configured, so the picker can
+// explain what to do instead of showing an empty grid.
+type GifSearchResult struct {
+	Gifs        []Gif  `json:"gifs"`
+	NeedsKey    bool   `json:"needsKey"`
+	Attribution string `json:"attribution"`
+}
+
+type GifFetchParams struct {
+	URL string `json:"url"`
+	ID  string `json:"id"`
+}
+
+type SetGiphyKeyParams struct {
+	Key string `json:"key"`
 }
 
 // DiscardCaptureParams removes a webcam capture the user rejected.

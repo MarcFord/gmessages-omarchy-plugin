@@ -55,6 +55,12 @@ Panel {
   // capture, and a shot taken blind deserves a bigger look before it is sent.
   property bool pendingFromCamera: false
   property bool textSelected: false
+  property bool gifPickerOpen: false
+  property var gifResults: []
+  property bool gifLoading: false
+  property bool gifNeedsKey: false
+  property string gifAttribution: ""
+  property string gifError: ""
   // Brief confirmation, so a copy is not silent.
   property bool copied: false
 
@@ -153,6 +159,7 @@ Panel {
     root.scrollRequested()   // re-pin before the new thread loads
     root.emojiPickerOpen = false
     root.cameraOpen = false
+    root.gifPickerOpen = false
     root.reactingTo = ""
     root.pendingAttachment = ""
     root.selectedConvID = id
@@ -298,6 +305,49 @@ Panel {
       if (!ok) root.threadError = String(res)
       // The updated message arrives as a push event, so there is nothing to
       // apply locally; a failure is the only thing worth reporting.
+    })
+  }
+
+  // ---- GIFs ----
+
+  function openGifPicker() {
+    root.emojiPickerOpen = false
+    root.cameraOpen = false
+    root.gifPickerOpen = true
+    if (root.gifResults.length === 0) root.searchGifs("")
+  }
+
+  function searchGifs(query) {
+    root.gifLoading = true
+    root.gifError = ""
+    gm.call("gifSearch", { query: query, limit: 24 }, function(ok, res) {
+      root.gifLoading = false
+      if (!ok) { root.gifError = String(res); return }
+      root.gifNeedsKey = res.needsKey === true
+      root.gifAttribution = res.attribution || ""
+      root.gifResults = res.gifs || []
+    })
+  }
+
+  function saveGiphyKey(key) {
+    gm.call("setGiphyKey", { key: key }, function(ok, res) {
+      if (!ok) { root.gifError = String(res); return }
+      root.gifNeedsKey = false
+      root.searchGifs("")
+    })
+  }
+
+  // Chosen GIFs go through the same staging bar as any other attachment, so
+  // there is still a look and a caption before anything is sent.
+  function chooseGif(url) {
+    root.gifError = ""
+    root.gifLoading = true
+    gm.call("gifFetch", { url: url }, function(ok, res) {
+      root.gifLoading = false
+      if (!ok) { root.gifError = String(res); return }
+      root.gifPickerOpen = false
+      root.pendingFromCamera = false
+      root.pendingAttachment = res.path
     })
   }
 
@@ -1090,8 +1140,22 @@ Panel {
           }
 
           PanelActionButton {
-            id: emojiButton
+            id: gifButton
             anchors.left: cameraButton.right
+            anchors.leftMargin: Style.space(2)
+            anchors.verticalCenter: parent.verticalCenter
+            iconText: "GIF"
+            fontSize: Style.font.caption
+            tooltipText: "Send a GIF"
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            enabled: composer.enabled && !root.sendingMedia
+            onClicked: root.gifPickerOpen ? root.gifPickerOpen = false : root.openGifPicker()
+          }
+
+          PanelActionButton {
+            id: emojiButton
+            anchors.left: gifButton.right
             anchors.leftMargin: Style.space(2)
             anchors.verticalCenter: parent.verticalCenter
             iconText: "\u{1F642}"
@@ -1332,6 +1396,167 @@ Panel {
           }
         }
 
+        // GIF picker.
+        Rectangle {
+          id: gifPicker
+          visible: root.gifPickerOpen && root.selectedConvID !== ""
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.bottom: composerRow.top
+          anchors.bottomMargin: Style.space(6)
+          height: visible ? Math.min(Style.space(280), parent.height * 0.7) : 0
+          z: 130
+          radius: Style.space(8)
+          color: Color.popups.background
+          border.width: 1
+          border.color: Color.popups.border
+          clip: true
+
+          MouseArea { anchors.fill: parent; hoverEnabled: true }
+
+          // --- key entry, when GIPHY has not been set up yet ---
+          Column {
+            anchors.centerIn: parent
+            width: parent.width - Style.space(40)
+            spacing: Style.space(8)
+            visible: root.gifNeedsKey
+
+            Text {
+              width: parent.width
+              horizontalAlignment: Text.AlignHCenter
+              wrapMode: Text.WordWrap
+              text: "GIF search needs a free GIPHY API key. Create one at developers.giphy.com, then paste it here."
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+            }
+
+            TextField {
+              id: giphyKeyField
+              width: parent.width
+              placeholderText: "GIPHY API key"
+              foreground: root.foreground
+              onAccepted: root.saveGiphyKey(text)
+            }
+
+            Button {
+              anchors.horizontalCenter: parent.horizontalCenter
+              text: "Save key"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              bordered: true
+              enabled: giphyKeyField.text.trim() !== ""
+              onClicked: root.saveGiphyKey(giphyKeyField.text)
+            }
+          }
+
+          // --- search + results ---
+          TextField {
+            id: gifSearchField
+            visible: !root.gifNeedsKey
+            anchors.left: parent.left
+            anchors.right: gifClose.left
+            anchors.top: parent.top
+            anchors.margins: Style.space(6)
+            anchors.rightMargin: Style.space(4)
+            placeholderText: "Search GIPHY"
+            foreground: root.foreground
+            onAccepted: root.searchGifs(text)
+          }
+
+          PanelActionButton {
+            id: gifClose
+            visible: !root.gifNeedsKey
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.margins: Style.space(6)
+            iconText: "\u00D7"
+            tooltipText: "Close"
+            foreground: root.dim
+            fontFamily: root.fontFamily
+            onClicked: root.gifPickerOpen = false
+          }
+
+          Text {
+            id: gifStatus
+            anchors.centerIn: parent
+            visible: !root.gifNeedsKey
+              && (root.gifLoading || root.gifError !== "" || root.gifResults.length === 0)
+            width: parent.width - Style.space(40)
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+            text: {
+              if (root.gifError !== "") return root.gifError
+              if (root.gifLoading) return "Searching…"
+              return "No GIFs found"
+            }
+            color: root.gifError !== "" ? Color.urgent : root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+          }
+
+          GridView {
+            id: gifGrid
+            visible: !root.gifNeedsKey && !root.gifLoading && root.gifResults.length > 0
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: gifSearchField.bottom
+            anchors.bottom: gifAttribution.top
+            anchors.margins: Style.space(6)
+            clip: true
+            cellWidth: Style.space(120)
+            cellHeight: Style.space(90)
+            model: root.gifResults
+            boundsBehavior: Flickable.StopAtBounds
+
+            delegate: Rectangle {
+              id: gifCell
+              required property var modelData
+              width: gifGrid.cellWidth - Style.space(4)
+              height: gifGrid.cellHeight - Style.space(4)
+              radius: Style.space(4)
+              color: gifCellHover.containsMouse
+                ? Style.hoverFillFor(root.foreground, Color.accent)
+                : "transparent"
+              clip: true
+
+              // AnimatedImage so the grid previews actually move, which is the
+              // only way to tell GIFs apart.
+              AnimatedImage {
+                anchors.fill: parent
+                anchors.margins: Style.space(2)
+                fillMode: Image.PreserveAspectCrop
+                asynchronous: true
+                cache: true
+                playing: gifPicker.visible
+                source: gifCell.modelData.previewURL
+              }
+
+              MouseArea {
+                id: gifCellHover
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.chooseGif(gifCell.modelData.sendURL)
+              }
+            }
+          }
+
+          // GIPHY's terms require this wherever their content is shown.
+          Text {
+            id: gifAttribution
+            visible: !root.gifNeedsKey && root.gifAttribution !== ""
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            anchors.margins: Style.space(6)
+            height: visible ? implicitHeight : 0
+            text: root.gifAttribution
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+        }
+
         // Emoji picker. Sits above the composer and inserts at the caret, so
         // it can be used mid-sentence rather than only at the end.
         Rectangle {
@@ -1466,7 +1691,8 @@ Panel {
           anchors.topMargin: Style.space(6)
           anchors.bottom: cameraView.visible ? cameraView.top
             : (attachmentBar.visible ? attachmentBar.top
-            : (emojiPicker.visible ? emojiPicker.top : threadErrorText.top))
+            : (gifPicker.visible ? gifPicker.top
+            : (emojiPicker.visible ? emojiPicker.top : threadErrorText.top)))
           anchors.bottomMargin: Style.space(6)
           visible: root.selectedConvID !== ""
           clip: true

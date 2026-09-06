@@ -146,12 +146,26 @@ Three buttons sit left of the message box:
 |--------|--------------|
 | 📎 | Pick an image from disk, via your desktop's own file chooser |
 | 📷 | Open the webcam with a live preview and a shutter button |
+| GIF | Search GIPHY and send a GIF |
 | 🙂 | Emoji picker — search by name, inserts at the cursor |
 
 Each message carries a faint 🙂 button at its corner; click it and pick a reaction. Tapping the same
 emoji again takes it back, a different one switches; your own reaction is
 outlined. Only the seven emoji Google Messages supports are offered — anything
 else is sent as a custom emoji that not every recipient can render.
+
+### GIFs
+
+The **GIF** button searches GIPHY. This needs a free API key, which GIPHY
+issues at [developers.giphy.com](https://developers.giphy.com/) — the picker
+prompts for it the first time and stores it in
+`~/.local/share/gmessages-omarchy/config.json`. Without a key the button
+explains what to do rather than failing.
+
+An empty search shows what is trending. Picking a GIF downloads it and stages
+it like any other attachment, so you still see it and can add a caption before
+sending. The smallest rendition that still looks right is used, since carriers
+reject large files, and anything over 8 MB is refused.
 
 Attachments are staged before they go anywhere: you see the image, can add a
 caption, and nothing is sent until you press **Send image**.
