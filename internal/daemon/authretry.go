@@ -1,9 +1,12 @@
 package daemon
 
 import (
+	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"go.mau.fi/mautrix-gmessages/pkg/libgm"
 
 	"github.com/MarcFord/gmessages-omarchy-plugin/internal/browser"
 	"github.com/MarcFord/gmessages-omarchy-plugin/internal/wire"
@@ -34,6 +37,22 @@ type cookieRefresher struct {
 // isSessionInvalid marks the failure Google returns once it has torn down the
 // web session entirely. Fresh cookies do not fix this: the auth token is bound
 // to the dead session, so the only way back is to pair again.
+// changedCookies names the cookies whose values differ. Names only: the values
+// are live credentials and must never reach a log.
+func changedCookies(auth *libgm.AuthData, fresh map[string]string) []string {
+	auth.CookiesLock.RLock()
+	defer auth.CookiesLock.RUnlock()
+
+	var changed []string
+	for name, value := range fresh {
+		if auth.Cookies[name] != value {
+			changed = append(changed, name)
+		}
+	}
+	sort.Strings(changed)
+	return changed
+}
+
 func isSessionInvalid(err error) bool {
 	if err == nil {
 		return false
@@ -74,9 +93,13 @@ func (d *Daemon) refreshBrowserCookies() bool {
 		if auth == nil {
 			return false
 		}
+		changed := changedCookies(auth, cookies)
 		auth.SetCookies(cookies)
 		d.saveSession()
-		d.log.Info().Str("profile", p.Name).Msg("Refreshed Google cookies from browser")
+		d.log.Info().
+			Str("profile", p.Name).
+			Strs("updated", changed).
+			Msg("Refreshed Google cookies from browser")
 		return true
 	}
 
@@ -99,20 +122,38 @@ func (d *Daemon) repairSession() bool {
 	d.cookies.mu.Unlock()
 
 	d.log.Warn().Msg("Session invalidated by Google; re-pairing automatically")
+
+	d.mu.RLock()
+	before := d.pairGeneration
+	d.mu.RUnlock()
+
 	if err := d.PairFromBrowser(); err != nil {
 		d.log.Error().Err(err).Msg("Automatic re-pair failed")
 		return false
 	}
 
-	// Pairing completes asynchronously; give it a moment to land before the
-	// caller retries.
-	for i := 0; i < 20; i++ {
+	// Wait for the pairing itself to complete, not merely for the connection
+	// to look healthy: the long poll recovering on its own would otherwise be
+	// mistaken for success while the phone is still being asked to confirm.
+	for i := 0; i < 90; i++ {
 		time.Sleep(time.Second)
-		if d.Status().State == wire.StateConnected {
+
+		d.mu.RLock()
+		now := d.pairGeneration
+		state := d.status.State
+		d.mu.RUnlock()
+
+		if now != before {
 			d.log.Info().Msg("Re-paired successfully")
 			return true
 		}
+		// Pairing gave up or was rejected; stop waiting.
+		if state == wire.StateError || state == wire.StateUnpaired {
+			d.log.Warn().Str("state", string(state)).Msg("Re-pair did not complete")
+			return false
+		}
 	}
+	d.log.Warn().Msg("Re-pair timed out")
 	return false
 }
 

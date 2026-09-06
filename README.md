@@ -199,11 +199,21 @@ Two credentials keep a session alive, and only one looks after itself:
   `SESSION_COOKIE_INVALID` — which retrying cannot fix, because it needs a new
   pairing.
 
-So the daemon re-syncs cookies from your browser profile every 15 minutes and
-persists the session every 10, rather than waiting for a failure. If a request
-does fail authentication it refreshes cookies and retries; if the session is
-already gone it re-pairs itself, which is silent once your account trusts the
-device.
+libgm keeps the cookies current by applying the `Set-Cookie` headers Google
+returns on every request, and the daemon persists the session every 10 minutes
+so that survives a restart.
+
+The daemon deliberately does **not** copy cookies from your browser on a timer.
+That was tried and it made things worse: `__Secure-1PSIDTS` is a *rotating*
+token, and the browser and the daemon each rotate their own copy. Overwriting
+the daemon's freshly-rotated cookie with the browser's hands Google a stale
+token, which it answers with `SESSION_COOKIE_INVALID` — killing the session the
+sync was meant to preserve.
+
+Reading the browser's cookies is reactive only: on an actual authentication
+failure, when our copy is known bad and the browser is the only other source.
+If the session is already gone the daemon re-pairs itself, which is usually
+silent once your account trusts the device.
 
 The practical consequence: **stay signed in to Google in the browser profile
 you paired from.** If you sign out there, the daemon loses its source of fresh

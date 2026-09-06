@@ -65,9 +65,9 @@ func (d *Daemon) SetProfile(name string) error {
 	}
 	d.log.Info().Str("profile", name).Msg("Browser profile selection changed")
 
-	// Adopt the new profile's cookies straight away rather than waiting for
-	// the next sync tick.
-	d.syncCookiesFromBrowser()
+	// Adopt the newly chosen profile's cookies immediately: the user picked it
+	// precisely because the current ones are not working.
+	d.refreshBrowserCookies()
 	return nil
 }
 

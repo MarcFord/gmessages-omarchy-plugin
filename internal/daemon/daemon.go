@@ -44,7 +44,14 @@ type Daemon struct {
 	// whether tapping an emoji adds, removes, or switches.
 	reactMu   sync.RWMutex
 	reactions map[string][]reactionRecord
-	cookies   cookieRefresher
+
+	// pairGeneration increments on every completed pairing. An automatic
+	// re-pair waits on this rather than on the connection state: the long poll
+	// can recover on its own and report "connected" while a pairing is still
+	// in flight, and treating that as success leaves the phone showing a
+	// prompt nobody is waiting for.
+	pairGeneration int
+	cookies        cookieRefresher
 
 	// Maintenance starts either after a stored session connects or after a
 	// fresh pairing, whichever happens first, and must run exactly once. It is
@@ -287,6 +294,7 @@ func (d *Daemon) handleEvent(raw any) {
 		d.stopPairRefresh()
 		d.mu.Lock()
 		d.paired = true
+		d.pairGeneration++
 		d.mu.Unlock()
 		d.startMaintenance()
 		d.saveSession()
