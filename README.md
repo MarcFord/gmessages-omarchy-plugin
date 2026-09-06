@@ -135,6 +135,11 @@ Message text can be selected with the mouse and copied with Ctrl+C; Ctrl+A
 selects the whole message. Right-clicking a bubble copies the entire message
 without selecting anything. Either way a brief **Copied** confirmation appears.
 
+Your own messages carry a delivery receipt underneath: **Sending…**, **Sent**,
+**Delivered**, **Read**, or **Failed**. Read is highlighted, the rest are muted.
+Read receipts come back over RCS; an SMS or MMS usually stops at *Sent*, so the
+absence of *Read* is not evidence a message went unread.
+
 A thread opens at its newest message and stays pinned there as messages arrive.
 Scrolling up releases the pin so nothing yanks you back mid-read; a ↓ button
 appears to return to the bottom.

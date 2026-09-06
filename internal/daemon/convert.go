@@ -136,6 +136,9 @@ func convertMessage(msg *gmproto.Message, senderName string) wire.Message {
 	out.Failed = isFailedStatus(status)
 	out.Pending = isPendingStatus(status)
 	out.Deleted = isDeletedStatus(status)
+	if out.FromMe {
+		out.Delivery = deliveryState(status)
+	}
 
 	if sp := msg.GetSenderParticipant(); sp != nil && out.SenderName == "" {
 		if n := sp.GetFullName(); n != "" {
@@ -174,6 +177,33 @@ func isFailedStatus(s gmproto.MessageStatusType) bool {
 	return strings.Contains(n, "FAILED") ||
 		s == gmproto.MessageStatusType_OUTGOING_CANCELED ||
 		s == gmproto.MessageStatusType_OUTGOING_RESTRICTED
+}
+
+// deliveryState reduces the status enum to what a sender actually wants to
+// know. Google folds direction and delivery into one field and adds values
+// regularly, so this matches on names where a family exists rather than
+// enumerating every variant.
+func deliveryState(s gmproto.MessageStatusType) string {
+	name := s.String()
+	switch {
+	case isFailedStatus(s):
+		return wire.DeliveryFailed
+	case isPendingStatus(s):
+		return wire.DeliverySending
+	}
+	switch s {
+	case gmproto.MessageStatusType_OUTGOING_DISPLAYED:
+		return wire.DeliveryRead
+	case gmproto.MessageStatusType_OUTGOING_DELIVERED:
+		return wire.DeliveryDelivered
+	case gmproto.MessageStatusType_OUTGOING_COMPLETE,
+		gmproto.MessageStatusType_OUTGOING_NOT_DELIVERED_YET:
+		return wire.DeliverySent
+	}
+	if strings.HasPrefix(name, "OUTGOING") {
+		return wire.DeliverySent
+	}
+	return ""
 }
 
 // isDeletedStatus catches both directions; a deleted message carries no parts

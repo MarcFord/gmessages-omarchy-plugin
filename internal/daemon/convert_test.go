@@ -380,3 +380,40 @@ func TestRecordReactionsClearsWhenRemoved(t *testing.T) {
 		t.Error("reactions should be cleared when a message reports none")
 	}
 }
+
+func TestDeliveryState(t *testing.T) {
+	cases := map[gmproto.MessageStatusType]string{
+		gmproto.MessageStatusType_OUTGOING_DISPLAYED:         wire.DeliveryRead,
+		gmproto.MessageStatusType_OUTGOING_DELIVERED:         wire.DeliveryDelivered,
+		gmproto.MessageStatusType_OUTGOING_COMPLETE:          wire.DeliverySent,
+		gmproto.MessageStatusType_OUTGOING_NOT_DELIVERED_YET: wire.DeliverySent,
+		gmproto.MessageStatusType_OUTGOING_SENDING:           wire.DeliverySending,
+		gmproto.MessageStatusType_OUTGOING_YET_TO_SEND:       wire.DeliverySending,
+		gmproto.MessageStatusType_OUTGOING_FAILED_GENERIC:    wire.DeliveryFailed,
+		// Incoming messages have no receipt of their own.
+		gmproto.MessageStatusType_INCOMING_COMPLETE: "",
+	}
+	for status, want := range cases {
+		if got := deliveryState(status); got != want {
+			t.Errorf("deliveryState(%s) = %q, want %q", status, got, want)
+		}
+	}
+}
+
+func TestConvertMessageSetsDeliveryOnlyForOutgoing(t *testing.T) {
+	out := convertMessage(&gmproto.Message{
+		MessageID:     "m1",
+		MessageStatus: &gmproto.MessageStatus{Status: gmproto.MessageStatusType_OUTGOING_DISPLAYED},
+	}, "")
+	if out.Delivery != wire.DeliveryRead {
+		t.Errorf("outgoing delivery = %q, want read", out.Delivery)
+	}
+
+	in := convertMessage(&gmproto.Message{
+		MessageID:     "m2",
+		MessageStatus: &gmproto.MessageStatus{Status: gmproto.MessageStatusType_INCOMING_COMPLETE},
+	}, "")
+	if in.Delivery != "" {
+		t.Errorf("incoming delivery = %q, want empty: a receipt on someone else's message is meaningless", in.Delivery)
+	}
+}

@@ -161,11 +161,25 @@ type Message struct {
 	Pending        bool   `json:"pending"`
 	// Deleted messages arrive with no text and no media; without this the UI
 	// would draw an empty bubble.
-	Deleted     bool         `json:"deleted"`
+	Deleted bool `json:"deleted"`
+	// Delivery is the receipt state for a message you sent: one of the
+	// Delivery* constants. Empty for incoming messages.
+	Delivery    string       `json:"delivery,omitempty"`
 	Attachments []Attachment `json:"attachments,omitempty"`
 	Reactions   []Reaction   `json:"reactions,omitempty"`
 	ReplyToID   string       `json:"replyToID,omitempty"`
 }
+
+// Delivery states for an outgoing message. Google reports read receipts only
+// over RCS; an SMS or MMS typically stops at "sent", so the absence of "read"
+// does not mean the message went unread.
+const (
+	DeliverySending   = "sending"
+	DeliverySent      = "sent"
+	DeliveryDelivered = "delivered"
+	DeliveryRead      = "read"
+	DeliveryFailed    = "failed"
+)
 
 // Reaction is an emoji reaction with its count. Mine drives the toggle: the
 // same emoji tapped twice removes it, a different one switches.

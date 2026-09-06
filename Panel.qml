@@ -2099,10 +2099,29 @@ Panel {
                 font.pixelSize: Style.font.caption
               }
 
+              // Delivery receipt, on your own messages only. Read receipts
+              // come back over RCS; an SMS or MMS usually stops at "Sent", so
+              // the absence of "Read" is not evidence it went unread.
               Text {
-                visible: rowRoot.msg && (rowRoot.msg.pending === true || rowRoot.msg.failed === true)
-                text: rowRoot.msg && rowRoot.msg.failed ? "Failed" : "Sending…"
-                color: rowRoot.msg && rowRoot.msg.failed ? Color.urgent : root.dim
+                visible: rowRoot.msg && rowRoot.msg.fromMe === true && text !== ""
+                text: {
+                  if (!rowRoot.msg) return ""
+                  switch (rowRoot.msg.delivery) {
+                  case "read":      return "Read"
+                  case "delivered": return "Delivered"
+                  case "sent":      return "Sent"
+                  case "sending":   return "Sending…"
+                  case "failed":    return "Failed"
+                  }
+                  return ""
+                }
+                color: {
+                  if (!rowRoot.msg) return root.dim
+                  if (rowRoot.msg.delivery === "failed") return Color.urgent
+                  // "Read" is the one worth noticing at a glance.
+                  if (rowRoot.msg.delivery === "read") return Color.accent
+                  return root.dim
+                }
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
               }
