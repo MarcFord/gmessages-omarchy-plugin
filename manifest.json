@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "marcford.gmessages",
   "name": "Google Messages",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "author": "MarcFord",
   "description": "Read and reply to Google Messages from the Omarchy bar",
   "kinds": [

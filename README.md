@@ -4,7 +4,6 @@ Read and reply to Google Messages from the Omarchy bar — an unread badge in th
 bar, and a panel with your conversation list, full thread history, inline
 images, and a composer.
 
-![status: alpha](https://img.shields.io/badge/status-alpha-orange)
 [![CI](https://github.com/MarcFord/gmessages-omarchy-plugin/actions/workflows/ci.yml/badge.svg)](https://github.com/MarcFord/gmessages-omarchy-plugin/actions/workflows/ci.yml)
 
 ![The panel: conversation list, threaded history with an inline image, and the composer](preview.png)
