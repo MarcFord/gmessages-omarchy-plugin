@@ -122,7 +122,7 @@ are editable from **Setup → Plugins**:
 | Path                                        | Contents                            |
 |---------------------------------------------|-------------------------------------|
 | `~/.local/share/gmessages-omarchy/session.json` | Pairing credentials — **secret** |
-| `~/.local/share/gmessages-omarchy/config.json`  | Preferences (chosen browser profile) |
+| `~/.local/share/gmessages-omarchy/config.json`  | Preferences: chosen browser profile, GIPHY API key — **secret** |
 | `~/.cache/gmessages-omarchy/media/`         | Downloaded attachments              |
 | `~/.cache/gmessages-omarchy/webcam-*.jpg`   | Photos taken with the webcam        |
 | `$XDG_RUNTIME_DIR/gmessages-omarchy/daemon.sock` | Plugin ↔ daemon socket         |
@@ -156,16 +156,42 @@ else is sent as a custom emoji that not every recipient can render.
 
 ### GIFs
 
-The **GIF** button searches GIPHY. This needs a free API key, which GIPHY
-issues at [developers.giphy.com](https://developers.giphy.com/) — the picker
-prompts for it the first time and stores it in
-`~/.local/share/gmessages-omarchy/config.json`. Without a key the button
-explains what to do rather than failing.
+The **GIF** button searches GIPHY. An empty search shows what is trending.
+Picking one downloads it and stages it like any other attachment, so you still
+see it and can add a caption before sending.
 
-An empty search shows what is trending. Picking a GIF downloads it and stages
-it like any other attachment, so you still see it and can add a caption before
-sending. The smallest rendition that still looks right is used, since carriers
-reject large files, and anything over 8 MB is refused.
+**You need your own free GIPHY API key.** The picker prompts for it the first
+time and explains what to do rather than failing:
+
+1. Go to [developers.giphy.com](https://developers.giphy.com/) and sign in.
+2. **Create an App**, and choose **API** (not SDK).
+3. Give it a name — `gmessages-omarchy` is fine — and accept the terms.
+4. Copy the **API Key** shown.
+5. Click **GIF** in the panel and paste it in.
+
+The key you get is a *beta* key: free, issued instantly, no review, and rate
+limited to a level that is ample for personal use. A production key requires
+GIPHY to review the app and only matters at real volume.
+
+It is stored in `~/.local/share/gmessages-omarchy/config.json` (mode `0600`),
+in plaintext, alongside your pairing credentials. To change or remove it, edit
+that file — deleting the `giphyApiKey` line returns the picker to its prompt.
+
+#### Why the key is not bundled
+
+Every user needs their own, and no key ships with this plugin:
+
+- A key committed to a public repository is a leaked key; scrapers find them
+  within hours.
+- Rate limits are per key, so one shared key would be drained by everyone at
+  once.
+- The key belongs to whoever registered it, and any user's abuse gets *that*
+  account's key revoked, breaking GIFs for all of them.
+- GIPHY's terms expect per-app registration.
+
+The smallest rendition that still looks right is sent, since carriers reject
+large files, and anything over 8 MB is refused. Downloads are restricted to
+`https` URLs on `giphy.com`.
 
 Attachments are staged before they go anywhere: you see the image, can add a
 caption, and nothing is sent until you press **Send image**.
