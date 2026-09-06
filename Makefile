@@ -3,6 +3,7 @@ BINDIR      ?= $(PREFIX)/bin
 PLUGIN_ID   := marcford.gmessages
 PLUGIN_DIR  ?= $(HOME)/.config/omarchy/plugins/$(PLUGIN_ID)
 UNIT_DIR    ?= $(HOME)/.config/systemd/user
+DATA_DIR    ?= $(if $(XDG_DATA_HOME),$(XDG_DATA_HOME),$(HOME)/.local/share)/gmessages-omarchy
 VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 QML_FILES   := Widget.qml Panel.qml GmClient.qml Avatar.qml Model.js manifest.json
@@ -37,6 +38,10 @@ install-plugin:
 
 install-service:
 	install -Dm644 systemd/gmessagesd.service $(UNIT_DIR)/gmessagesd.service
+	# ProtectHome=read-only means the unit's ReadWritePaths= entry must already
+	# exist, and it is resolved before ExecStart runs -- so the daemon cannot
+	# create its own data directory. systemd creates the runtime and cache dirs.
+	install -d -m700 $(DATA_DIR)
 	systemctl --user daemon-reload
 
 uninstall:

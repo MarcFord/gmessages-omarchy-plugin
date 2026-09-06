@@ -14,8 +14,20 @@ RestartSec=5s
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=%h/.local/share/gmessages-omarchy %h/.cache/gmessages-omarchy
-ReadWritePaths=%t/gmessages-omarchy
+
+# Let systemd own the runtime and cache directories. It creates them before the
+# mount namespace is built, which matters because ReadWritePaths= is resolved at
+# that same point: naming a directory that does not exist yet aborts startup with
+# 226/NAMESPACE. The runtime dir lives on a tmpfs and so is empty after every
+# reboot, which made a ReadWritePaths=%t/... entry fail on the first boot after
+# install -- the daemon that would have created it never got to run.
+RuntimeDirectory=gmessages-omarchy
+RuntimeDirectoryMode=0700
+CacheDirectory=gmessages-omarchy
+CacheDirectoryMode=0700
+
+# No systemd equivalent maps to XDG_DATA_HOME, so `make install` creates this one.
+ReadWritePaths=%h/.local/share/gmessages-omarchy
 NoNewPrivileges=yes
 ProtectKernelTunables=yes
 ProtectControlGroups=yes
