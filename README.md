@@ -132,6 +132,10 @@ are editable from **Setup → Plugins**:
 Click the bar icon to open the panel. Pick a conversation on the left, read the
 thread on the right, type in the composer and press Enter (or Send).
 
+Message text can be selected with the mouse and copied with Ctrl+C; Ctrl+A
+selects the whole message. Right-clicking a bubble copies the entire message
+without selecting anything. Either way a brief **Copied** confirmation appears.
+
 A thread opens at its newest message and stays pinned there as messages arrive.
 Scrolling up releases the pin so nothing yanks you back mid-read; a ↓ button
 appears to return to the bottom.

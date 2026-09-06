@@ -54,6 +54,20 @@ Panel {
   // Whether what is staged came from the webcam. Retake only makes sense for a
   // capture, and a shot taken blind deserves a bigger look before it is sent.
   property bool pendingFromCamera: false
+  property bool textSelected: false
+  // Brief confirmation, so a copy is not silent.
+  property bool copied: false
+
+  function flashCopied() {
+    root.copied = true
+    copiedTimer.restart()
+  }
+
+  Timer {
+    id: copiedTimer
+    interval: 1200
+    onTriggered: root.copied = false
+  }
   readonly property string omarchyPath: {
     var p = Quickshell.env("OMARCHY_PATH")
     return p && p.length > 0 ? p : "/usr/share/omarchy"
@@ -506,7 +520,7 @@ Panel {
       anchors.fill: parent
       // The composer owns the keyboard whenever a thread is open, otherwise
       // typing a reply would be swallowed as panel navigation.
-      blocked: composerFocus
+      blocked: composerFocus || root.textSelected
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
 
@@ -1293,6 +1307,31 @@ Panel {
           }
         }
 
+        // Copy confirmation. A clipboard write is otherwise invisible, which
+        // leaves the user unsure whether it worked.
+        Rectangle {
+          visible: root.copied
+          anchors.horizontalCenter: parent.horizontalCenter
+          anchors.bottom: composerRow.top
+          anchors.bottomMargin: Style.space(10)
+          z: 200
+          width: copiedLabel.implicitWidth + Style.space(20)
+          height: Style.space(26)
+          radius: height / 2
+          color: Color.popups.background
+          border.width: 1
+          border.color: Color.popups.border
+
+          Text {
+            id: copiedLabel
+            anchors.centerIn: parent
+            text: "Copied"
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+          }
+        }
+
         // Emoji picker. Sits above the composer and inserts at the caret, so
         // it can be used mid-sentence rather than only at the end.
         Rectangle {
@@ -1619,7 +1658,14 @@ Panel {
             id: bubbleHover
             anchors.fill: parent
             hoverEnabled: true
-            acceptedButtons: Qt.NoButton
+            // Right-click copies the whole message, which is what people
+            // usually want and avoids fiddly selection inside a scrolling list.
+            acceptedButtons: Qt.RightButton
+            onClicked: {
+              if (!rowRoot.msg || !rowRoot.msg.text) return
+              Quickshell.clipboardText = rowRoot.msg.text
+              root.flashCopied()
+            }
           }
 
           // React button, pinned to the bubble's outer corner and drawn above
@@ -1635,7 +1681,10 @@ Panel {
             // photo — and a control you cannot find is worse than a faint one.
             // It stays dim until pointed at.
             visible: rowRoot.msg !== null && !rowRoot.msg.pending && !rowRoot.msg.deleted
-            opacity: reactButtonHover.containsMouse || root.reactingTo === rowRoot.msg.id
+            // Guarded: this binding re-evaluates for every row, day separators
+            // included, and those carry no message.
+            opacity: rowRoot.msg && (reactButtonHover.containsMouse
+                                     || root.reactingTo === rowRoot.msg.id)
               ? 1.0
               : (bubbleHover.containsMouse ? 0.85 : 0.25)
             anchors.verticalCenter: parent.top
@@ -1665,7 +1714,9 @@ Panel {
               hoverEnabled: true
               cursorShape: Qt.PointingHandCursor
               onClicked: root.reactingTo =
-                root.reactingTo === rowRoot.msg.id ? "" : rowRoot.msg.id
+                rowRoot.msg
+                  ? (root.reactingTo === rowRoot.msg.id ? "" : rowRoot.msg.id)
+                  : ""
             }
           }
           color: rowRoot.mine
@@ -1762,7 +1813,12 @@ Panel {
               }
             }
 
-            Text {
+            // A read-only TextEdit rather than a Text: Text cannot be
+            // selected at all, so message contents could not be highlighted or
+            // copied. Qt keeps the mouse grab once a drag-selection starts, so
+            // this does not fight the list's scrolling.
+            TextEdit {
+              id: bubbleText
               width: parent.width
               visible: text !== ""
               height: visible ? implicitHeight : 0
@@ -1773,10 +1829,37 @@ Panel {
               }
               color: rowRoot.msg && rowRoot.msg.deleted ? root.dim : root.foreground
               font.italic: rowRoot.msg ? rowRoot.msg.deleted === true : false
-              wrapMode: Text.Wrap
-              textFormat: Text.PlainText
+              wrapMode: TextEdit.Wrap
+              textFormat: TextEdit.PlainText
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
+
+              readOnly: true
+              selectByMouse: true
+              persistentSelection: false
+              selectionColor: Style.selectedFillFor(root.foreground, Color.accent)
+              selectedTextColor: root.foreground
+              // Keep the caret out of a message the user is only reading.
+              activeFocusOnPress: true
+              cursorVisible: false
+
+              onSelectedTextChanged: root.textSelected = selectedText !== ""
+
+              // Copy explicitly rather than relying on the default handler:
+              // the panel's key catcher sits above this and would otherwise
+              // swallow the shortcut.
+              Keys.onPressed: function (event) {
+                if (event.key === Qt.Key_C && (event.modifiers & Qt.ControlModifier)) {
+                  if (selectedText !== "") {
+                    Quickshell.clipboardText = selectedText
+                    root.flashCopied()
+                  }
+                  event.accepted = true
+                } else if (event.key === Qt.Key_A && (event.modifiers & Qt.ControlModifier)) {
+                  selectAll()
+                  event.accepted = true
+                }
+              }
             }
 
             Row {
