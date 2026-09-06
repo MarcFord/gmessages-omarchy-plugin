@@ -334,6 +334,16 @@ func (d *Daemon) dispatch(ctx context.Context, req wire.Request) wire.Response {
 		}
 		return ok(nil)
 
+	case wire.MethodDiscardCapture:
+		p, err := decodeParams[wire.DiscardCaptureParams](req.Params)
+		if err != nil {
+			return fail(err)
+		}
+		if err := d.DiscardCapture(p.Path); err != nil {
+			return fail(err)
+		}
+		return ok(nil)
+
 	case wire.MethodUnpair:
 		if err := d.Unpair(ctx); err != nil {
 			return fail(err)

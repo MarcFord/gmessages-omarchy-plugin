@@ -56,6 +56,7 @@ const (
 	MethodListProfiles    = "listProfiles"
 	MethodSetProfile      = "setProfile"
 	MethodReact           = "react"
+	MethodDiscardCapture  = "discardCapture"
 	MethodUnpair          = "unpair"
 	MethodMedia           = "media"
 	MethodAvatar          = "avatar"
@@ -253,6 +254,11 @@ type BrowserProfile struct {
 // SetProfileParams chooses a profile by name; empty means automatic.
 type SetProfileParams struct {
 	Name string `json:"name"`
+}
+
+// DiscardCaptureParams removes a webcam capture the user rejected.
+type DiscardCaptureParams struct {
+	Path string `json:"path"`
 }
 
 // PickImageResult carries the chosen path, or empty when the user cancelled.

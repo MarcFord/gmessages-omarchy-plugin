@@ -51,6 +51,9 @@ Panel {
   property int countdown: 0
   property bool capturing: false
   property string capturePath: ""
+  // Whether what is staged came from the webcam. Retake only makes sense for a
+  // capture, and a shot taken blind deserves a bigger look before it is sent.
+  property bool pendingFromCamera: false
   readonly property string omarchyPath: {
     var p = Quickshell.env("OMARCHY_PATH")
     return p && p.length > 0 ? p : "/usr/share/omarchy"
@@ -288,6 +291,7 @@ Panel {
 
   function attachFromDisk() {
     root.threadError = ""
+    root.pendingFromCamera = false
     gm.call("pickImage", null, function(ok, res) {
       if (!ok) { root.threadError = String(res); return }
       if (res && res.path) root.pendingAttachment = res.path
@@ -296,9 +300,20 @@ Panel {
 
   function openCamera() {
     root.emojiPickerOpen = false
+    // Reopening the camera discards whatever shot is staged, so clean it up
+    // rather than leaving full-resolution rejects in the cache.
+    root.discardPendingCapture()
     root.pendingAttachment = ""
     root.countdown = 0
     root.cameraOpen = true
+  }
+
+  // discardPendingCapture deletes a staged webcam shot. Files picked from disk
+  // belong to the user and are never touched.
+  function discardPendingCapture() {
+    if (!root.pendingFromCamera || root.pendingAttachment === "") return
+    gm.call("discardCapture", { path: root.pendingAttachment }, null)
+    root.pendingFromCamera = false
   }
 
   function startCountdown() {
@@ -339,6 +354,7 @@ Panel {
       root.capturing = false
       if (code === 0) {
         root.cameraOpen = false
+        root.pendingFromCamera = true
         root.pendingAttachment = root.capturePath
       } else {
         root.cameraOpen = false
@@ -349,6 +365,7 @@ Panel {
   }
 
   function cancelAttachment() {
+    root.discardPendingCapture()
     root.pendingAttachment = ""
     root.cameraOpen = false
   }
@@ -363,6 +380,7 @@ Panel {
         root.sendingMedia = false
         if (!ok) { root.threadError = String(res); return }
         root.pendingAttachment = ""
+        root.pendingFromCamera = false
         if (convID === root.selectedConvID) {
           var list = root.messages.slice()
           list.push(res)
@@ -1099,7 +1117,7 @@ Panel {
           anchors.right: parent.right
           anchors.bottom: composerRow.top
           anchors.bottomMargin: Style.space(6)
-          height: visible ? Style.space(132) : 0
+          height: visible ? (root.pendingFromCamera ? Style.space(210) : Style.space(132)) : 0
           z: 110
           radius: Style.space(8)
           color: Color.popups.background
@@ -1114,7 +1132,10 @@ Panel {
             anchors.top: parent.top
             anchors.margins: Style.space(8)
             height: parent.height - Style.space(16)
-            width: implicitWidth > 0 ? Math.min(Style.space(150), implicitWidth * (height / Math.max(1, implicitHeight))) : 0
+            width: implicitWidth > 0
+              ? Math.min(root.pendingFromCamera ? Style.space(260) : Style.space(150),
+                         implicitWidth * (height / Math.max(1, implicitHeight)))
+              : 0
             fillMode: Image.PreserveAspectFit
             asynchronous: true
             smooth: true
@@ -1131,6 +1152,7 @@ Panel {
             anchors.topMargin: Style.space(10)
             elide: Text.ElideMiddle
             text: {
+              if (root.pendingFromCamera) return "Photo from webcam"
               var p = root.pendingAttachment
               var slash = p.lastIndexOf("/")
               return slash >= 0 ? p.substring(slash + 1) : p
@@ -1161,6 +1183,18 @@ Panel {
             anchors.bottom: parent.bottom
             anchors.bottomMargin: Style.space(10)
             spacing: Style.space(6)
+
+            Button {
+              // Straight back to the camera. Without this a bad shot means
+              // cancelling and hunting for the camera button again, which is
+              // the common case when you cannot see what you photographed.
+              visible: root.pendingFromCamera
+              text: "Retake"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              enabled: !root.sendingMedia
+              onClicked: root.openCamera()
+            }
 
             Button {
               text: "Cancel"

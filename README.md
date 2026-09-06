@@ -155,9 +155,11 @@ caption, and nothing is sent until you press **Send image**.
 The file chooser runs through `xdg-desktop-portal`, so it is the same dialog
 the rest of your desktop uses and works correctly under Wayland.
 
-The webcam shoots via a separate `ffmpeg` process after a 3-second countdown,
-and the photo is shown for approval before anything is sent. There is no live
-preview, and that is deliberate — see below.
+The webcam shoots via a separate `ffmpeg` process after a 3-second countdown.
+Because there is no live preview (deliberately — see below), the shot is shown
+back at a larger size with three choices: **Retake**, **Cancel**, or **Send
+image**, plus an optional caption. Rejected captures are deleted rather than
+left in the cache.
 
 Set `cameraDevice` if your webcam is not `/dev/video0`.
 
