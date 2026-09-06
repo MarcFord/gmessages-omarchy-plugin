@@ -79,6 +79,8 @@ Item {
         root._triedAutostart = false
         root.call("status", null, function(ok, res) { if (ok && res) root.status = res })
         root.refreshConversations()
+        reconnectTimer.stop()
+        reconnectTimer.interval = 1000
       } else {
         // Drop callbacks that can never be answered now.
         root._pending = ({})
@@ -102,12 +104,34 @@ Item {
     onExited: reconnectTimer.start()
   }
 
+  // This has to keep firing on its own. A connect attempt that fails leaves the
+  // socket where it already was -- disconnected -- so connectionState does not
+  // change, onConnectionStateChanged never runs, and nothing else would re-arm
+  // the timer. With repeat: false that made the client give up after a single
+  // attempt: a shell started while the daemon was down (an empty runtime dir on
+  // the first boot after install, say) stayed dead until the shell itself was
+  // restarted, even once the daemon came back.
+  //
+  // Back off up to 30s so a daemon that is down for hours costs almost nothing,
+  // while a daemon that restarts is picked up within a second or two.
   Timer {
     id: reconnectTimer
-    interval: 2000
-    repeat: false
-    onTriggered: if (!sock.connected && root.socketPath !== "") sock.connected = true
+    interval: 1000
+    repeat: true
+    onTriggered: {
+      if (sock.connected || root.socketPath === "") {
+        stop()
+        interval = 1000
+        return
+      }
+      if (interval < 30000) interval = Math.min(interval * 2, 30000)
+      sock.connected = true
+    }
   }
+
+  // Start retrying even if the very first connect fails before anything above
+  // is wired up; the timer stops itself as soon as it is connected.
+  Component.onCompleted: if (!sock.connected) reconnectTimer.start()
 
   function _handleLine(line) {
     if (!line || line.length === 0) return
