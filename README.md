@@ -132,6 +132,10 @@ are editable from **Setup → Plugins**:
 Click the bar icon to open the panel. Pick a conversation on the left, read the
 thread on the right, type in the composer and press Enter (or Send).
 
+A thread opens at its newest message and stays pinned there as messages arrive.
+Scrolling up releases the pin so nothing yanks you back mid-read; a ↓ button
+appears to return to the bottom.
+
 Three buttons sit left of the message box:
 
 | Button | What it does |

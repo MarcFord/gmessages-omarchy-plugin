@@ -133,6 +133,7 @@ Panel {
 
   function selectConversation(id) {
     if (id === root.selectedConvID) return
+    root.scrollRequested()   // re-pin before the new thread loads
     root.emojiPickerOpen = false
     root.cameraOpen = false
     root.reactingTo = ""
@@ -1401,12 +1402,72 @@ Panel {
           boundsBehavior: Flickable.StopAtBounds
           cacheBuffer: 600
 
+          // A thread should open at its newest message and stay there as new
+          // ones arrive, the way every messenger behaves — until the user
+          // scrolls up, at which point it must stop yanking them back.
+          //
+          // A single positionViewAtEnd() is not enough: delegate heights keep
+          // changing after it runs, because images load asynchronously and
+          // resize their bubbles. Each of those resizes shifts the content
+          // under the viewport, which is what made a sent message appear to
+          // jump upward. So re-pin whenever the content height changes, for as
+          // long as the user is still at the bottom.
+          property bool stickToBottom: true
+
+          function pinToBottom() {
+            if (count > 0) positionViewAtEnd()
+          }
+
+          onCountChanged: if (stickToBottom) Qt.callLater(pinToBottom)
+          onContentHeightChanged: if (stickToBottom) Qt.callLater(pinToBottom)
+
+          // Only user-driven movement releases the pin; programmatic
+          // repositioning must not switch it off.
+          onMovementEnded: stickToBottom = atYEnd
+          onDraggingChanged: if (!dragging) stickToBottom = atYEnd
+          onFlickEnded: stickToBottom = atYEnd
+
+          // The wheel moves contentY without a drag or flick, so catch that too.
+          onContentYChanged: if (moving || flicking || dragging) stickToBottom = atYEnd
+
           delegate: messageRow
 
           Connections {
             target: root
             function onScrollRequested() {
-              if (messageList.count > 0) messageList.positionViewAtEnd()
+              messageList.stickToBottom = true
+              Qt.callLater(messageList.pinToBottom)
+            }
+          }
+
+          // Jump back to the newest message after scrolling up.
+          Rectangle {
+            visible: !messageList.stickToBottom && messageList.count > 0
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            anchors.margins: Style.space(8)
+            width: Style.space(26)
+            height: Style.space(26)
+            radius: width / 2
+            color: Color.popups.background
+            border.width: 1
+            border.color: Color.popups.border
+
+            Text {
+              anchors.centerIn: parent
+              text: "\u2193"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+            }
+
+            MouseArea {
+              anchors.fill: parent
+              cursorShape: Qt.PointingHandCursor
+              onClicked: {
+                messageList.stickToBottom = true
+                messageList.pinToBottom()
+              }
             }
           }
         }
