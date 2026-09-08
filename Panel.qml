@@ -105,6 +105,12 @@ Panel {
   ]
 
   readonly property int unread: gm.unread
+  readonly property int unreadConversations: {
+    var n = 0
+    var list = gm.conversations
+    for (var i = 0; i < list.length; i++) if (list[i].unread === true) n++
+    return n
+  }
   readonly property string connState: gm.state
   readonly property bool ready: gm.state === "connected"
 
@@ -170,6 +176,24 @@ Panel {
   }
 
   // ---- actions ----
+
+  // The list is ordered newest-first, so an unread thread that has been quiet
+  // for a while sits well below the fold: the badge says 1 and the top of the
+  // list looks empty, which reads as a phantom count. This jumps to it.
+  // Emits rather than touching the list directly: the list lives inside the
+  // clientView Component, and ids declared in a Component are not in scope
+  // here. Reaching for them throws a ReferenceError at the point of use.
+  signal unreadJumpRequested(string convID, int index)
+
+  function jumpToUnread() {
+    var list = gm.conversations
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].unread === true) {
+        root.unreadJumpRequested(list[i].id, i)
+        return
+      }
+    }
+  }
 
   function selectConversation(id) {
     if (id === root.selectedConvID) return
@@ -1174,11 +1198,53 @@ Panel {
           onTextChanged: root.searchQuery = text
         }
 
+        Connections {
+          target: root
+          function onUnreadJumpRequested(convID, index) {
+            // Clear any search first: a filtered model may not contain the
+            // thread at all, and the index is into the unfiltered list.
+            if (searchField.text !== "") searchField.text = ""
+            root.selectConversation(convID)
+            convList.positionViewAtIndex(index, ListView.Contain)
+          }
+        }
+
+        // Appears only when something is unread, so it costs nothing the rest
+        // of the time.
+        Rectangle {
+          id: unreadChip
+          visible: root.unreadConversations > 0
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.top: searchField.bottom
+          anchors.topMargin: Style.space(6)
+          height: visible ? Style.space(28) : 0
+          radius: Style.space(6)
+          color: Style.normalFillFor(root.foreground, Color.accent)
+
+          MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.jumpToUnread()
+          }
+
+          Text {
+            anchors.centerIn: parent
+            text: root.unreadConversations === 1
+              ? "1 unread \u2014 jump to it"
+              : root.unreadConversations + " unread \u2014 jump to the first"
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: true
+          }
+        }
+
         ListView {
           id: convList
           anchors.left: parent.left
           anchors.right: parent.right
-          anchors.top: searchField.bottom
+          anchors.top: unreadChip.visible ? unreadChip.bottom : searchField.bottom
           anchors.bottom: parent.bottom
           anchors.topMargin: Style.space(6)
           clip: true
