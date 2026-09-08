@@ -21,7 +21,8 @@
       "autostart": true,
       "serviceName": "gmessagesd.service",
       "cameraDevice": "/dev/video0",
-      "audioDevice": "default"
+      "audioDevice": "default",
+      "normalizeVoice": true
     },
     "schema": [
       {
@@ -43,6 +44,11 @@
         "key": "audioDevice",
         "type": "string",
         "label": "PulseAudio/PipeWire source for voice messages"
+      },
+      {
+        "key": "normalizeVoice",
+        "type": "boolean",
+        "label": "Normalise voice recording level"
       }
     ]
   }

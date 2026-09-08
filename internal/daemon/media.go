@@ -137,8 +137,16 @@ func extForMime(mime string) string {
 		return ".jpg"
 	case "video/mp4":
 		return ".mp4"
-	case "audio/mp4", "audio/mpeg":
+	case "audio/mp4", "audio/aac":
 		return ".m4a"
+	case "audio/mpeg", "audio/mp3":
+		return ".mp3"
+	case "audio/ogg":
+		return ".ogg"
+	case "audio/amr":
+		return ".amr"
+	case "audio/3gpp":
+		return ".3ga"
 	default:
 		return ".bin"
 	}

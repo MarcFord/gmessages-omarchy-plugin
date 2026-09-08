@@ -60,7 +60,12 @@ Panel {
   property int recordSeconds: 0
   property bool pendingIsVoice: false
   property int pendingVoiceSeconds: 0
-  property bool playingVoice: false
+  // One player for everything, so a received message and a staged recording
+  // cannot talk over each other. "staged" means the recording in the composer;
+  // anything else is an attachment key.
+  property string playingKey: ""
+  property string audioWaitingKey: ""
+  readonly property bool playingVoice: root.playingKey === "staged"
   property string voicePath: ""
   property bool keepRecording: false
   // A cap, not a target: an unattended recording would otherwise grow until it
@@ -248,6 +253,19 @@ Panel {
     for (var k in root.mediaPaths) next[k] = root.mediaPaths[k]
     next[mediaID] = value
     root.mediaPaths = next
+    // Someone pressed play before this finished downloading.
+    if (root.audioWaitingKey === mediaID) {
+      if (value) {
+        root._startAudio(mediaID, value)
+      } else {
+        // Still no bytes; requestMedia retries on its own, so only give up
+        // once it has stopped trying.
+        if (!mediaRetry.running) {
+          root.audioWaitingKey = ""
+          root.threadError = "That voice message could not be downloaded."
+        }
+      }
+    }
   }
 
   // Undownloaded MMS has no bytes on the phone's side yet; the daemon asks for
@@ -420,13 +438,24 @@ Panel {
     root.pendingVoiceSeconds = 0
     root.recordSeconds = 0
     root.voicePath = root.captureDir + "/voice-" + Date.now() + ".m4a"
-    voiceProc.command = [
+    var cmd = [
       "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
       "-f", "pulse", "-i", root.setting("audioDevice", "default"),
-      "-ac", "1", "-ar", "44100", "-c:a", "aac", "-b:a", "64k",
-      "-t", String(root.maxRecordSeconds),
-      root.voicePath
+      // 48 kHz is what the capture devices actually run at, so this avoids a
+      // resample on the way in.
+      "-ac", "1", "-ar", "48000"
     ]
+    if (root.setting("normalizeVoice", true)) {
+      // Recorded speech is usually well below the level a phone plays back at,
+      // which lands as "you sound far away" at the other end. speechnorm lifts
+      // it to a consistent level without the lookahead delay loudnorm needs;
+      // the high-pass takes out desk rumble and handling noise first.
+      cmd.push("-af", "highpass=f=80,speechnorm=e=12.5:r=0.00025:l=1")
+    }
+    cmd.push("-c:a", "aac", "-b:a", "96k",
+             "-t", String(root.maxRecordSeconds),
+             root.voicePath)
+    voiceProc.command = cmd
     root.recording = true
     voiceProc.running = true
     recordTimer.start()
@@ -456,16 +485,40 @@ Panel {
   }
 
   function playPendingVoice() {
-    if (root.pendingAttachment === "" || root.playingVoice) return
-    playProc.command = ["ffplay", "-nodisp", "-autoexit", "-loglevel", "error", root.pendingAttachment]
-    root.playingVoice = true
+    if (root.pendingAttachment === "") return
+    root._startAudio("staged", root.pendingAttachment)
+  }
+
+  // playAttachment plays a received voice message, fetching it first if the
+  // bytes are not local yet. Audio is not prefetched the way images are --
+  // downloading every voice note in a thread on scroll would be rude -- so the
+  // first press may have to wait for the download.
+  function playAttachment(key) {
+    if (!key) return
+    if (root.playingKey === key) { root.stopPlayback(); return }
+    var path = root.mediaPaths[key]
+    if (path) {
+      root._startAudio(key, path)
+      return
+    }
+    root.stopPlayback()
+    root.audioWaitingKey = key
+    root.requestMedia(key)
+  }
+
+  function _startAudio(key, path) {
+    root.stopPlayback()
+    root.audioWaitingKey = ""
+    playProc.command = ["ffplay", "-nodisp", "-autoexit", "-loglevel", "error", path]
+    root.playingKey = key
     playProc.running = true
   }
 
   function stopPlayback() {
-    if (!root.playingVoice) return
+    root.audioWaitingKey = ""
+    if (root.playingKey === "") return
+    root.playingKey = ""
     playProc.running = false
-    root.playingVoice = false
   }
 
   function formatDuration(secs) {
@@ -565,7 +618,7 @@ Panel {
 
   Process {
     id: playProc
-    onExited: root.playingVoice = false
+    onExited: root.playingKey = ""
   }
 
   Process {
@@ -2271,8 +2324,13 @@ Panel {
                   && img.implicitWidth > 0
                   && img.implicitWidth < modelData.width * 0.9
 
+                readonly property bool isVoice: modelData.isAudio === true
+                readonly property bool playing: attachment.isVoice && root.playingKey === attachment.mediaKey
+                readonly property bool loading: attachment.isVoice && root.audioWaitingKey === attachment.mediaKey
+
                 width: bubbleContent.width
                 height: {
+                  if (attachment.isVoice) return Style.space(40)
                   if (!modelData.isImage) return Style.space(24)
                   if (img.status === Image.Ready) return img.height + (isPreview ? Style.space(18) : 0)
                   return Style.space(120)
@@ -2281,6 +2339,51 @@ Panel {
                 // Bytes are fetched only once the attachment is realised, so
                 // opening a long thread does not pull every image in it.
                 Component.onCompleted: if (modelData.isImage) root.requestMedia(attachment.mediaKey)
+
+                // Voice message. Bytes are fetched on first press rather than
+                // on scroll, so a thread full of voice notes is not downloaded
+                // just by looking at it.
+                Rectangle {
+                  id: voiceRow
+                  visible: attachment.isVoice
+                  anchors.left: parent.left
+                  anchors.top: parent.top
+                  width: Math.min(parent.width, Style.space(220))
+                  height: Style.space(34)
+                  radius: height / 2
+                  color: Style.normalFillFor(root.foreground, Color.accent)
+
+                  MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.playAttachment(attachment.mediaKey)
+                  }
+
+                  Text {
+                    id: voiceGlyph
+                    anchors.left: parent.left
+                    anchors.leftMargin: Style.space(12)
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: attachment.playing ? "\u{23F9}" : "\u{25B6}"
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                  }
+
+                  Text {
+                    anchors.left: voiceGlyph.right
+                    anchors.leftMargin: Style.space(10)
+                    anchors.right: parent.right
+                    anchors.rightMargin: Style.space(10)
+                    anchors.verticalCenter: parent.verticalCenter
+                    elide: Text.ElideRight
+                    text: attachment.loading ? "Fetching\u2026"
+                      : attachment.playing ? "Playing\u2026" : "Voice message"
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                  }
+                }
 
                 Image {
                   id: img
@@ -2316,7 +2419,7 @@ Panel {
                 // failed image reads as "loading" rather than as a blank bubble.
                 Rectangle {
                   anchors.fill: parent
-                  visible: attachment.pending
+                  visible: attachment.pending && !attachment.isVoice
                   radius: Style.space(6)
                   color: Style.normalFillFor(root.foreground, Color.accent)
 

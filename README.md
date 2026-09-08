@@ -223,9 +223,32 @@ or re-recorded take is deleted from the cache rather than left behind.
 Recording stops by asking `ffmpeg` to quit rather than by killing it. An MP4
 writes its index last, so a killed process leaves a file that will not play.
 
-Pick a different input with the **PulseAudio/PipeWire source for voice
-messages** setting — any source name `pactl list short sources` reports, or
-`default`.
+Recordings are normalised before encoding (`highpass` + `speechnorm`), because
+speech captured at a comfortable desk level is usually well below what a phone
+plays back at, and the result reads as "you sound far away" at the other end.
+Turn that off with the **Normalise voice recording level** setting if you would
+rather send the raw level.
+
+#### Choosing the input
+
+`default` follows whatever your system default source is. To pin a specific
+microphone, list the inputs:
+
+```bash
+pactl list short sources | grep -v monitor
+```
+
+and put the source name in the **PulseAudio/PipeWire source for voice
+messages** setting, either through the widget's settings in Omarchy or with:
+
+```bash
+omarchy-shell shell setBarWidget marcford.gmessages audioDevice \
+  '"alsa_input.usb-Your_Mic-00.analog-stereo"' '{}'
+```
+
+To check which source a recording actually used, start one and run
+`pactl list source-outputs | grep -A1 "application.name"` while it runs — the
+`Source:` number maps to the `pactl list short sources` output.
 Because there is no live preview (deliberately — see below), the shot is shown
 back at a larger size with three choices: **Retake**, **Cancel**, or **Send
 image**, plus an optional caption. Rejected captures are deleted rather than
