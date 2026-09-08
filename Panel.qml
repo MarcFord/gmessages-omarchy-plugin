@@ -253,19 +253,6 @@ Panel {
     for (var k in root.mediaPaths) next[k] = root.mediaPaths[k]
     next[mediaID] = value
     root.mediaPaths = next
-    // Someone pressed play before this finished downloading.
-    if (root.audioWaitingKey === mediaID) {
-      if (value) {
-        root._startAudio(mediaID, value)
-      } else {
-        // Still no bytes; requestMedia retries on its own, so only give up
-        // once it has stopped trying.
-        if (!mediaRetry.running) {
-          root.audioWaitingKey = ""
-          root.threadError = "That voice message could not be downloaded."
-        }
-      }
-    }
   }
 
   // Undownloaded MMS has no bytes on the phone's side yet; the daemon asks for
@@ -293,6 +280,22 @@ Panel {
       }
       if (tries === 0) root._withMedia(key, "")
     })
+  }
+
+  // Only ever one outstanding play request: pressing play on a second message
+  // replaces the first, and audioWaitingKey is what decides which one wins.
+  Timer {
+    id: audioRetry
+    property string key: ""
+    property int attempt: 0
+    interval: 3000
+    repeat: false
+    function schedule(k, a) {
+      key = k
+      attempt = a
+      restart()
+    }
+    onTriggered: if (root.audioWaitingKey === key) root._fetchAudio(key, attempt)
   }
 
   // Small queue so several pending attachments can be retried independently.
@@ -503,7 +506,37 @@ Panel {
     }
     root.stopPlayback()
     root.audioWaitingKey = key
-    root.requestMedia(key)
+    root._fetchAudio(key, 0)
+  }
+
+  // Audio is fetched here rather than through requestMedia. That path marks a
+  // download as in flight by writing an empty path -- the same value it writes
+  // for a failure -- and it dedupes on the key already being present. Both are
+  // fine for an image, which simply appears whenever it arrives. Neither
+  // survives "press play and tell me if it did not work": the empty marker is
+  // written before the request is even sent, so it reads as an instant failure.
+  function _fetchAudio(key, attempt) {
+    gm.call("media", { key: key }, function(ok, res) {
+      // Stopped, or a different message started, while this was in flight.
+      if (root.audioWaitingKey !== key) return
+
+      if (ok && res && res.path && !res.thumbnail) {
+        root._withMedia(key, res.path)
+        root._startAudio(key, res.path)
+        return
+      }
+      // A thumbnail is not the audio, and pending means the phone has been
+      // asked to upload the original and has not finished.
+      var stillComing = ok && res && (res.pending === true || res.thumbnail === true)
+      if (stillComing && attempt < 6) {
+        audioRetry.schedule(key, attempt + 1)
+        return
+      }
+      root.audioWaitingKey = ""
+      root.threadError = stillComing
+        ? "That voice message is still uploading from your phone — try again in a moment."
+        : "That voice message could not be downloaded."
+    })
   }
 
   function _startAudio(key, path) {
