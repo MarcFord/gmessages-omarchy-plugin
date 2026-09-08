@@ -20,7 +20,8 @@
     "defaults": {
       "autostart": true,
       "serviceName": "gmessagesd.service",
-      "cameraDevice": "/dev/video0"
+      "cameraDevice": "/dev/video0",
+      "audioDevice": "default"
     },
     "schema": [
       {
@@ -37,6 +38,11 @@
         "key": "cameraDevice",
         "type": "string",
         "label": "Webcam device for photo capture"
+      },
+      {
+        "key": "audioDevice",
+        "type": "string",
+        "label": "PulseAudio/PipeWire source for voice messages"
       }
     ]
   }

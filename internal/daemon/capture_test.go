@@ -83,3 +83,37 @@ func TestDiscardCaptureRefusesAnythingElse(t *testing.T) {
 		t.Error("must refuse subdirectories of the cache directory")
 	}
 }
+
+func TestDiscardCaptureRemovesVoiceRecordings(t *testing.T) {
+	d, dir := newCaptureDaemon(t)
+	path := filepath.Join(dir, "voice-1757280000.m4a")
+	if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.DiscardCapture(path); err != nil {
+		t.Fatalf("discard failed: %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Error("voice recording should have been removed")
+	}
+}
+
+func TestIsOwnCapture(t *testing.T) {
+	ours := []string{"webcam-1.jpg", "voice-1.m4a"}
+	for _, name := range ours {
+		if !isOwnCapture(name) {
+			t.Errorf("%q should be recognised as ours", name)
+		}
+	}
+	// Downloaded attachments share the cache directory, so a discard must not
+	// be able to reach them by name.
+	notOurs := []string{
+		"", "voice-1.mp3", "webcam-1.png", "voice.m4a", "recording.m4a",
+		"session.json", "config.json", "avatar-1.jpg",
+	}
+	for _, name := range notOurs {
+		if isOwnCapture(name) {
+			t.Errorf("%q must not be treated as ours", name)
+		}
+	}
+}

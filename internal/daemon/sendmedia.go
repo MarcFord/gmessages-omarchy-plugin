@@ -125,18 +125,38 @@ func (d *Daemon) SendMedia(ctx context.Context, p wire.SendMediaParams) (*wire.M
 			MimeType: mime,
 			Size:     int64(len(data)),
 			IsImage:  strings.HasPrefix(mime, "image/"),
+			IsAudio:  strings.HasPrefix(mime, "audio/"),
 		}},
 	}, nil
 }
 
+// audioMimeByExt covers the container formats libgm knows how to type. The
+// extension decides these, not the sniffer: an .m4a is an MP4 container, so
+// content sniffing calls it video/mp4 (or fails to identify it at all), and
+// uploading a voice note as video would show the recipient a video message.
+var audioMimeByExt = map[string]string{
+	".m4a":  "audio/mp4",
+	".aac":  "audio/aac",
+	".mp3":  "audio/mpeg",
+	".ogg":  "audio/ogg",
+	".oga":  "audio/ogg",
+	".opus": "audio/ogg",
+	".amr":  "audio/amr",
+	".3ga":  "audio/3gpp",
+}
+
 // detectMime prefers sniffing the content, since a wrong extension would make
-// the phone reject the upload.
+// the phone reject the upload. Audio is the exception -- see audioMimeByExt.
 func detectMime(data []byte, fileName string) string {
+	ext := strings.ToLower(filepath.Ext(fileName))
+	if mime, ok := audioMimeByExt[ext]; ok {
+		return mime
+	}
 	if mime := http.DetectContentType(data); mime != "" && mime != "application/octet-stream" {
 		// DetectContentType appends charset for text types.
 		return strings.TrimSpace(strings.Split(mime, ";")[0])
 	}
-	switch strings.ToLower(filepath.Ext(fileName)) {
+	switch ext {
 	case ".png":
 		return "image/png"
 	case ".jpg", ".jpeg":

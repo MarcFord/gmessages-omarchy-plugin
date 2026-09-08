@@ -54,6 +54,18 @@ Panel {
   // Whether what is staged came from the webcam. Retake only makes sense for a
   // capture, and a shot taken blind deserves a bigger look before it is sent.
   property bool pendingFromCamera: false
+  // Voice recording. pendingIsVoice marks a staged recording so the staging bar
+  // shows a player instead of an image preview, and so cancelling deletes it.
+  property bool recording: false
+  property int recordSeconds: 0
+  property bool pendingIsVoice: false
+  property int pendingVoiceSeconds: 0
+  property bool playingVoice: false
+  property string voicePath: ""
+  property bool keepRecording: false
+  // A cap, not a target: an unattended recording would otherwise grow until it
+  // hits the daemon's 25 MB upload limit and fail only at send time.
+  readonly property int maxRecordSeconds: 300
   property bool textSelected: false
   property bool gifPickerOpen: false
   property var gifResults: []
@@ -364,6 +376,8 @@ Panel {
 
   function openCamera() {
     root.emojiPickerOpen = false
+    if (root.recording) root.cancelRecording()
+    root.stopPlayback()
     // Reopening the camera discards whatever shot is staged, so clean it up
     // rather than leaving full-resolution rejects in the cache.
     root.discardPendingCapture()
@@ -372,12 +386,92 @@ Panel {
     root.cameraOpen = true
   }
 
-  // discardPendingCapture deletes a staged webcam shot. Files picked from disk
-  // belong to the user and are never touched.
+  // discardPendingCapture deletes a staged webcam shot or voice recording.
+  // Files picked from disk belong to the user and are never touched.
   function discardPendingCapture() {
-    if (!root.pendingFromCamera || root.pendingAttachment === "") return
+    if (root.pendingAttachment === "") return
+    if (!root.pendingFromCamera && !root.pendingIsVoice) return
     gm.call("discardCapture", { path: root.pendingAttachment }, null)
     root.pendingFromCamera = false
+    root.pendingIsVoice = false
+  }
+
+  // ---- voice messages ----
+  //
+  // Recording runs as a child ffmpeg process for the same reason webcam capture
+  // does: QtMultimedia's FFmpeg backend segfaults inside the shell, and the
+  // shell also owns the bar and the lock screen.
+  //
+  // The output is AAC in an MP4 container, which is what Google Messages wants
+  // for a voice note -- mautrix's own bridge converts to exactly this before
+  // uploading. That container writes its index last, so the recording has to be
+  // ended by asking ffmpeg to stop ("q" on stdin) rather than by killing it;
+  // a killed process leaves a file with no moov atom, which will not play.
+  function startRecording() {
+    if (root.recording || root.selectedConvID === "") return
+    root.emojiPickerOpen = false
+    root.gifPickerOpen = false
+    root.cameraOpen = false
+    root.threadError = ""
+    // Starting a new recording throws away whatever was staged, same as the
+    // camera does, so rejects do not pile up in the cache.
+    root.discardPendingCapture()
+    root.pendingAttachment = ""
+    root.pendingVoiceSeconds = 0
+    root.recordSeconds = 0
+    root.voicePath = root.captureDir + "/voice-" + Date.now() + ".m4a"
+    voiceProc.command = [
+      "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+      "-f", "pulse", "-i", root.setting("audioDevice", "default"),
+      "-ac", "1", "-ar", "44100", "-c:a", "aac", "-b:a", "64k",
+      "-t", String(root.maxRecordSeconds),
+      root.voicePath
+    ]
+    root.recording = true
+    voiceProc.running = true
+    recordTimer.start()
+  }
+
+  // stopRecording ends the take and stages it. keep=false throws it away.
+  function stopRecording(keep) {
+    if (!root.recording) return
+    recordTimer.stop()
+    root.keepRecording = keep === true
+    root.pendingVoiceSeconds = root.recordSeconds
+    root.recording = false
+    // Ask ffmpeg to finish writing. onExited does the staging, because the file
+    // is not complete until the process is gone.
+    try {
+      voiceProc.write("q\n")
+    } catch (e) {
+      // No stdin for some reason; fall back to terminating it. The container
+      // still gets finalised, but the exit code is no longer meaningful.
+      voiceProc.running = false
+    }
+    stopFallbackTimer.restart()
+  }
+
+  function cancelRecording() {
+    root.stopRecording(false)
+  }
+
+  function playPendingVoice() {
+    if (root.pendingAttachment === "" || root.playingVoice) return
+    playProc.command = ["ffplay", "-nodisp", "-autoexit", "-loglevel", "error", root.pendingAttachment]
+    root.playingVoice = true
+    playProc.running = true
+  }
+
+  function stopPlayback() {
+    if (!root.playingVoice) return
+    playProc.running = false
+    root.playingVoice = false
+  }
+
+  function formatDuration(secs) {
+    var m = Math.floor(secs / 60)
+    var s = secs % 60
+    return m + ":" + (s < 10 ? "0" + s : String(s))
   }
 
   function startCountdown() {
@@ -412,6 +506,68 @@ Panel {
     }
   }
 
+  Timer {
+    id: recordTimer
+    interval: 1000
+    repeat: true
+    onTriggered: {
+      root.recordSeconds += 1
+      // ffmpeg stops itself at -t, so mirror that here rather than letting the
+      // counter run past the file that is actually being written.
+      if (root.recordSeconds >= root.maxRecordSeconds) root.stopRecording(true)
+    }
+  }
+
+  // If ffmpeg ignores the quit request, make sure the UI cannot be left stuck
+  // in a state where the recording never resolves.
+  Timer {
+    id: stopFallbackTimer
+    interval: 3000
+    repeat: false
+    onTriggered: if (voiceProc.running) voiceProc.running = false
+  }
+
+  Process {
+    id: voiceProc
+    stdinEnabled: true
+    onExited: function(code) {
+      stopFallbackTimer.stop()
+      root.recording = false
+      recordTimer.stop()
+      // 255 is what ffmpeg reports when it was asked to stop rather than
+      // reaching the end of its input; the file is still finalised.
+      var ok = (code === 0 || code === 255)
+      if (!root.keepRecording) {
+        // Cancelled: the file was still written, so clean it up.
+        if (root.voicePath !== "") gm.call("discardCapture", { path: root.voicePath }, null)
+        root.voicePath = ""
+        return
+      }
+      if (!ok) {
+        root.threadError = "Recording failed (ffmpeg exit " + code
+          + "). Check that a microphone is available."
+        if (root.voicePath !== "") gm.call("discardCapture", { path: root.voicePath }, null)
+        root.voicePath = ""
+        return
+      }
+      if (root.pendingVoiceSeconds < 1) {
+        root.threadError = "That was too short to send."
+        gm.call("discardCapture", { path: root.voicePath }, null)
+        root.voicePath = ""
+        return
+      }
+      root.pendingFromCamera = false
+      root.pendingIsVoice = true
+      root.pendingAttachment = root.voicePath
+      root.voicePath = ""
+    }
+  }
+
+  Process {
+    id: playProc
+    onExited: root.playingVoice = false
+  }
+
   Process {
     id: captureProc
     onExited: function(code) {
@@ -429,8 +585,10 @@ Panel {
   }
 
   function cancelAttachment() {
+    root.stopPlayback()
     root.discardPendingCapture()
     root.pendingAttachment = ""
+    root.pendingIsVoice = false
     root.cameraOpen = false
   }
 
@@ -445,6 +603,7 @@ Panel {
         if (!ok) { root.threadError = String(res); return }
         root.pendingAttachment = ""
         root.pendingFromCamera = false
+        root.pendingIsVoice = false
         if (convID === root.selectedConvID) {
           var list = root.messages.slice()
           list.push(res)
@@ -1140,8 +1299,21 @@ Panel {
           }
 
           PanelActionButton {
-            id: gifButton
+            id: micButton
             anchors.left: cameraButton.right
+            anchors.leftMargin: Style.space(2)
+            anchors.verticalCenter: parent.verticalCenter
+            iconText: root.recording ? "\u{23F9}" : "\u{1F3A4}"
+            tooltipText: root.recording ? "Stop recording" : "Record a voice message"
+            foreground: root.recording ? "#e06c75" : root.foreground
+            fontFamily: root.fontFamily
+            enabled: composer.enabled && !root.sendingMedia
+            onClicked: root.recording ? root.stopRecording(true) : root.startRecording()
+          }
+
+          PanelActionButton {
+            id: gifButton
+            anchors.left: micButton.right
             anchors.leftMargin: Style.space(2)
             anchors.verticalCenter: parent.verticalCenter
             iconText: "GIF"
@@ -1186,6 +1358,77 @@ Panel {
           }
         }
 
+        // Live recording indicator. There is no waveform: drawing one would mean
+        // reading the audio stream inside the shell, which is the thing that is
+        // not safe to do here, so this shows elapsed time instead.
+        Rectangle {
+          id: recordingBar
+          visible: root.recording && root.selectedConvID !== ""
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.bottom: composerRow.top
+          anchors.bottomMargin: Style.space(6)
+          height: visible ? Style.space(56) : 0
+          z: 111
+          radius: Style.space(8)
+          color: Color.popups.background
+          border.width: 1
+          border.color: "#e06c75"
+
+          MouseArea { anchors.fill: parent; hoverEnabled: true }
+
+          Rectangle {
+            id: recordDot
+            anchors.left: parent.left
+            anchors.leftMargin: Style.space(12)
+            anchors.verticalCenter: parent.verticalCenter
+            width: Style.space(10)
+            height: width
+            radius: width / 2
+            color: "#e06c75"
+            SequentialAnimation on opacity {
+              running: root.recording
+              loops: Animation.Infinite
+              NumberAnimation { from: 1.0; to: 0.25; duration: 600 }
+              NumberAnimation { from: 0.25; to: 1.0; duration: 600 }
+            }
+          }
+
+          Text {
+            anchors.left: recordDot.right
+            anchors.leftMargin: Style.space(10)
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Recording  " + root.formatDuration(root.recordSeconds)
+              + "  /  " + root.formatDuration(root.maxRecordSeconds)
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            font.bold: true
+          }
+
+          Row {
+            anchors.right: parent.right
+            anchors.rightMargin: Style.space(10)
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(6)
+
+            Button {
+              text: "Cancel"
+              foreground: root.dim
+              fontFamily: root.fontFamily
+              onClicked: root.cancelRecording()
+            }
+
+            Button {
+              text: "Stop"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              bordered: true
+              onClicked: root.stopRecording(true)
+            }
+          }
+        }
+
         // Staged attachment: what will be sent, with a caption box and an
         // explicit Send. Nothing is transmitted until this is confirmed.
         Rectangle {
@@ -1195,7 +1438,9 @@ Panel {
           anchors.right: parent.right
           anchors.bottom: composerRow.top
           anchors.bottomMargin: Style.space(6)
-          height: visible ? (root.pendingFromCamera ? Style.space(210) : Style.space(132)) : 0
+          height: visible ? (root.pendingIsVoice ? Style.space(132)
+                             : root.pendingFromCamera ? Style.space(210)
+                             : Style.space(132)) : 0
           z: 110
           radius: Style.space(8)
           color: Color.popups.background
@@ -1217,12 +1462,34 @@ Panel {
             fillMode: Image.PreserveAspectFit
             asynchronous: true
             smooth: true
-            source: root.pendingAttachment !== "" ? "file://" + root.pendingAttachment : ""
+            visible: !root.pendingIsVoice
+            source: (root.pendingAttachment !== "" && !root.pendingIsVoice)
+              ? "file://" + root.pendingAttachment : ""
+          }
+
+          // Stand-in for the image preview when what is staged is audio.
+          Rectangle {
+            id: voicePreview
+            visible: root.pendingIsVoice
+            anchors.left: parent.left
+            anchors.top: parent.top
+            anchors.margins: Style.space(8)
+            height: parent.height - Style.space(16)
+            width: visible ? Style.space(96) : 0
+            radius: Style.space(6)
+            color: Color.popups.border
+
+            Text {
+              anchors.centerIn: parent
+              text: "\u{1F3A4}"
+              font.pixelSize: Style.font.title
+              color: root.foreground
+            }
           }
 
           Text {
             id: attachName
-            anchors.left: attachPreview.right
+            anchors.left: root.pendingIsVoice ? voicePreview.right : attachPreview.right
             anchors.leftMargin: Style.space(10)
             anchors.right: parent.right
             anchors.rightMargin: Style.space(10)
@@ -1230,6 +1497,9 @@ Panel {
             anchors.topMargin: Style.space(10)
             elide: Text.ElideMiddle
             text: {
+              if (root.pendingIsVoice) {
+                return "Voice message  \u00B7  " + root.formatDuration(root.pendingVoiceSeconds)
+              }
               if (root.pendingFromCamera) return "Photo from webcam"
               var p = root.pendingAttachment
               var slash = p.lastIndexOf("/")
@@ -1243,7 +1513,7 @@ Panel {
 
           TextField {
             id: attachCaption
-            anchors.left: attachPreview.right
+            anchors.left: root.pendingIsVoice ? voicePreview.right : attachPreview.right
             anchors.leftMargin: Style.space(10)
             anchors.right: parent.right
             anchors.rightMargin: Style.space(10)
@@ -1261,6 +1531,27 @@ Panel {
             anchors.bottom: parent.bottom
             anchors.bottomMargin: Style.space(10)
             spacing: Style.space(6)
+
+            Button {
+              // Listening back before sending matters more here than for a
+              // photo: there is no preview while recording, so this is the
+              // only chance to hear what is about to be sent.
+              visible: root.pendingIsVoice
+              text: root.playingVoice ? "Stop" : "Play"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              enabled: !root.sendingMedia
+              onClicked: root.playingVoice ? root.stopPlayback() : root.playPendingVoice()
+            }
+
+            Button {
+              visible: root.pendingIsVoice
+              text: "Re-record"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              enabled: !root.sendingMedia
+              onClicked: { root.stopPlayback(); root.startRecording() }
+            }
 
             Button {
               // Straight back to the camera. Without this a bad shot means
@@ -1283,7 +1574,8 @@ Panel {
             }
 
             Button {
-              text: root.sendingMedia ? "Sending…" : "Send image"
+              text: root.sendingMedia ? "Sending…"
+                : root.pendingIsVoice ? "Send voice message" : "Send image"
               foreground: root.foreground
               fontFamily: root.fontFamily
               bordered: true

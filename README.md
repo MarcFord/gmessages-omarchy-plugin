@@ -2,7 +2,7 @@
 
 Read and reply to Google Messages from the Omarchy bar — an unread badge in the
 bar, and a panel with your conversation list, full thread history, inline
-images, and a composer.
+images, voice messages, and a composer.
 
 [![CI](https://github.com/MarcFord/gmessages-omarchy-plugin/actions/workflows/ci.yml/badge.svg)](https://github.com/MarcFord/gmessages-omarchy-plugin/actions/workflows/ci.yml)
 
@@ -24,7 +24,8 @@ Runtime tools, all of which a typical Omarchy install already has:
 | `sqlite3` | reading the browser cookie database | pairing cannot read cookies |
 | `secret-tool` (libsecret) | the browser's cookie encryption key | pairing cannot decrypt cookies |
 | `xdg-desktop-portal` | the "attach an image" file chooser | the 📎 button does nothing |
-| `ffmpeg` | webcam capture | the 📷 button reports a failure |
+| `ffmpeg` | webcam capture and voice recording | the 📷 and 🎤 buttons report a failure |
+| `ffplay` (ships with ffmpeg) | playing a recording back before sending | the Play button does nothing |
 | `qrencode` | the legacy QR pairing fallback | only the QR path is affected |
 
 ## Install
@@ -124,6 +125,7 @@ are editable from **Setup → Plugins**:
 | `~/.local/share/gmessages-omarchy/config.json`  | Preferences: chosen browser profile, GIPHY API key — **secret** |
 | `~/.cache/gmessages-omarchy/media/`         | Downloaded attachments              |
 | `~/.cache/gmessages-omarchy/webcam-*.jpg`   | Photos taken with the webcam        |
+| `~/.cache/gmessages-omarchy/voice-*.m4a`    | Voice messages you recorded         |
 | `$XDG_RUNTIME_DIR/gmessages-omarchy/daemon.sock` | Plugin ↔ daemon socket         |
 
 ## Using it
@@ -204,6 +206,26 @@ The file chooser runs through `xdg-desktop-portal`, so it is the same dialog
 the rest of your desktop uses and works correctly under Wayland.
 
 The webcam shoots via a separate `ffmpeg` process after a 3-second countdown.
+
+### Voice messages
+
+The 🎤 button records from your default PulseAudio/PipeWire source and stages
+the result like any other attachment: nothing is sent until you press **Send
+voice message**, and **Play** lets you hear it first — worth doing, since there
+is no level meter while recording. **Re-record** starts over, **Cancel** deletes
+the file.
+
+Recordings are mono AAC in an MP4 container (`.m4a`), which is the format
+Google Messages expects for a voice note; mautrix's own bridge converts to the
+same thing before uploading. They are capped at five minutes, and a cancelled
+or re-recorded take is deleted from the cache rather than left behind.
+
+Recording stops by asking `ffmpeg` to quit rather than by killing it. An MP4
+writes its index last, so a killed process leaves a file that will not play.
+
+Pick a different input with the **PulseAudio/PipeWire source for voice
+messages** setting — any source name `pactl list short sources` reports, or
+`default`.
 Because there is no live preview (deliberately — see below), the shot is shown
 back at a larger size with three choices: **Retake**, **Cancel**, or **Send
 image**, plus an optional caption. Rejected captures are deleted rather than

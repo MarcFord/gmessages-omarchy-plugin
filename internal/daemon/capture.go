@@ -7,10 +7,11 @@ import (
 	"strings"
 )
 
-// DiscardCapture deletes a webcam capture the user chose not to send.
+// DiscardCapture deletes a webcam photo or voice recording the user chose not
+// to send.
 //
-// Without this, every retake and cancel leaves a full-resolution JPEG in the
-// cache directory forever. The path is checked rather than trusted: this is
+// Without this, every retake and cancel leaves a full-resolution JPEG or an
+// audio file in the cache directory forever. The path is checked rather than trusted: this is
 // reachable over the socket, and a delete that accepts any path it is handed
 // is a liability regardless of who is expected to call it.
 func (d *Daemon) DiscardCapture(path string) error {
@@ -32,14 +33,26 @@ func (d *Daemon) DiscardCapture(path string) error {
 	if filepath.Dir(resolved) != captureDir {
 		return fmt.Errorf("refusing to delete outside the cache directory")
 	}
-	base := filepath.Base(resolved)
-	if !strings.HasPrefix(base, "webcam-") || !strings.HasSuffix(base, ".jpg") {
-		return fmt.Errorf("refusing to delete %q: not a webcam capture", base)
+	if !isOwnCapture(filepath.Base(resolved)) {
+		return fmt.Errorf("refusing to delete %q: not a capture this plugin made", filepath.Base(resolved))
 	}
 
 	if err := os.Remove(resolved); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove capture: %w", err)
 	}
-	d.log.Debug().Str("file", base).Msg("Discarded webcam capture")
+	d.log.Debug().Str("file", filepath.Base(resolved)).Msg("Discarded capture")
 	return nil
+}
+
+// isOwnCapture matches only the names this plugin generates, so a discard
+// cannot be talked into deleting an unrelated file that happens to sit in the
+// cache directory -- downloaded attachments live there too.
+func isOwnCapture(base string) bool {
+	switch {
+	case strings.HasPrefix(base, "webcam-") && strings.HasSuffix(base, ".jpg"):
+		return true
+	case strings.HasPrefix(base, "voice-") && strings.HasSuffix(base, ".m4a"):
+		return true
+	}
+	return false
 }
