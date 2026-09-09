@@ -35,6 +35,8 @@ type mediaSecret struct {
 	name      string
 	messageID string
 	partID    string
+	// size is what the message claims the attachment is. A claim, not a fact.
+	size int64
 }
 
 // mediaCache stores decrypted attachments on disk so re-opening a thread does
@@ -94,6 +96,7 @@ func (m *mediaCache) record(msg *gmproto.Message) {
 			name:      md.GetMediaName(),
 			messageID: msg.GetMessageID(),
 			partID:    part.GetActionMessageID(),
+			size:      md.GetSize(),
 		}
 	}
 }
@@ -180,8 +183,8 @@ func (d *Daemon) Media(ctx context.Context, p wire.MediaParams) (*wire.MediaResu
 		return &wire.MediaResult{Key: key, Path: dest, Thumbnail: !haveFull}, nil
 	}
 
-	c, err := d.requireClient()
-	if err != nil {
+	// Fail early when there is no session; the download path checks again.
+	if _, err := d.requireClient(); err != nil {
 		return nil, err
 	}
 
@@ -210,18 +213,28 @@ func (d *Daemon) Media(ctx context.Context, p wire.MediaParams) (*wire.MediaResu
 		close(done)
 	}()
 
+	// The declared size is not trusted -- downloadMediaBounded holds the real
+	// limit -- but refusing here avoids opening a connection at all for an
+	// attachment that is already known to be too big.
+	if secret.size > maxDownloadBytes {
+		return nil, fmt.Errorf("%w (%d MB declared)", errAttachmentTooLarge, secret.size>>20)
+	}
+
 	// Route order matters and is the same one the Matrix bridge uses: the
 	// full-size original first, then a server-side thumbnail, and only then
 	// the bytes inlined in the message. Inline data is a preview a few hundred
 	// bytes long — checking it first served that in place of a real photo even
 	// when the original was available.
-	var data []byte
+	var (
+		data []byte
+		err  error
+	)
 	isThumb := false
 
 	switch {
 	case secret.mediaID != "":
 		data, err = withAuthRetry(d, func() ([]byte, error) {
-			return c.DownloadMedia(secret.mediaID, secret.key)
+			return d.downloadMediaBounded(ctx, secret.mediaID, secret.key)
 		})
 		if err != nil {
 			return nil, fmt.Errorf("download media: %w", err)
@@ -229,7 +242,7 @@ func (d *Daemon) Media(ctx context.Context, p wire.MediaParams) (*wire.MediaResu
 
 	case secret.thumbID != "":
 		data, err = withAuthRetry(d, func() ([]byte, error) {
-			return c.DownloadMedia(secret.thumbID, secret.thumbKey)
+			return d.downloadMediaBounded(ctx, secret.thumbID, secret.thumbKey)
 		})
 		if err != nil {
 			return nil, fmt.Errorf("download thumbnail: %w", err)
@@ -237,6 +250,11 @@ func (d *Daemon) Media(ctx context.Context, p wire.MediaParams) (*wire.MediaResu
 		isThumb = true
 
 	case len(secret.inline) > 0:
+		// Inline bytes arrive inside a message rather than over a download, so
+		// they are bounded here instead.
+		if len(secret.inline) > maxDownloadBytes {
+			return nil, errAttachmentTooLarge
+		}
 		data = secret.inline
 		isThumb = true
 
@@ -248,6 +266,13 @@ func (d *Daemon) Media(ctx context.Context, p wire.MediaParams) (*wire.MediaResu
 
 	if err := os.WriteFile(dest, data, 0o600); err != nil {
 		return nil, fmt.Errorf("write media: %w", err)
+	}
+	// Trim the cache after each write rather than on a timer, so the bound
+	// holds even if the daemon never idles.
+	if freed, pruneErr := d.media.prune(); pruneErr != nil {
+		d.log.Warn().Err(pruneErr).Msg("Could not trim the attachment cache")
+	} else if freed > 0 {
+		d.log.Debug().Int64("freed_bytes", freed).Msg("Trimmed the attachment cache")
 	}
 
 	d.log.Debug().

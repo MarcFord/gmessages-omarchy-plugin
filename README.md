@@ -332,6 +332,31 @@ default behaviour. The choice is stored in
 `~/.local/share/gmessages-omarchy/config.json` and is honoured by the
 background cookie sync too, so it keeps working with no panel open.
 
+## Resource limits
+
+Everything the daemon accepts from the network is bounded, because none of it is
+under your control — an attachment's size is whatever the far side decides to
+send.
+
+| Limit | Value | Why |
+|-------|-------|-----|
+| Outgoing upload | 25 MB | Rejected before upload; carriers reject larger anyway |
+| Incoming attachment | 32 MB | Read through a bounded reader, so an oversized or unbounded response is refused rather than allocated |
+| Attachment cache | 256 MB | Trimmed oldest-first after each write |
+| Voice recording | 5 minutes | `ffmpeg` stops itself at the cap |
+
+The incoming limit is enforced on the response body as it is read, not from the
+declared `Content-Length`: a response can declare a small size and send far
+more, or declare nothing at all. The size a message *claims* an attachment is
+gets used only as an early short-circuit, to avoid opening a connection for
+something already known to be too big.
+
+This means the plugin does not call `libgm`'s `DownloadMedia`, which reads the
+whole body with `io.ReadAll` and whose HTTP client is not reachable from
+outside that package. `internal/daemon/download.go` issues the same request
+using `libgm`'s own exported helpers and decryption, and differs only in
+reading through an `io.LimitReader`.
+
 ## Deliberate limits
 
 ### Why it works this way
