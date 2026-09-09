@@ -54,6 +54,23 @@ Panel {
   // Whether what is staged came from the webcam. Retake only makes sense for a
   // capture, and a shot taken blind deserves a bigger look before it is sent.
   property bool pendingFromCamera: false
+  // Voice recording. pendingIsVoice marks a staged recording so the staging bar
+  // shows a player instead of an image preview, and so cancelling deletes it.
+  property bool recording: false
+  property int recordSeconds: 0
+  property bool pendingIsVoice: false
+  property int pendingVoiceSeconds: 0
+  // One player for everything, so a received message and a staged recording
+  // cannot talk over each other. "staged" means the recording in the composer;
+  // anything else is an attachment key.
+  property string playingKey: ""
+  property string audioWaitingKey: ""
+  readonly property bool playingVoice: root.playingKey === "staged"
+  property string voicePath: ""
+  property bool keepRecording: false
+  // A cap, not a target: an unattended recording would otherwise grow until it
+  // hits the daemon's 25 MB upload limit and fail only at send time.
+  readonly property int maxRecordSeconds: 300
   property bool textSelected: false
   property bool gifPickerOpen: false
   property var gifResults: []
@@ -88,6 +105,12 @@ Panel {
   ]
 
   readonly property int unread: gm.unread
+  readonly property int unreadConversations: {
+    var n = 0
+    var list = gm.conversations
+    for (var i = 0; i < list.length; i++) if (list[i].unread === true) n++
+    return n
+  }
   readonly property string connState: gm.state
   readonly property bool ready: gm.state === "connected"
 
@@ -153,6 +176,24 @@ Panel {
   }
 
   // ---- actions ----
+
+  // The list is ordered newest-first, so an unread thread that has been quiet
+  // for a while sits well below the fold: the badge says 1 and the top of the
+  // list looks empty, which reads as a phantom count. This jumps to it.
+  // Emits rather than touching the list directly: the list lives inside the
+  // clientView Component, and ids declared in a Component are not in scope
+  // here. Reaching for them throws a ReferenceError at the point of use.
+  signal unreadJumpRequested(string convID, int index)
+
+  function jumpToUnread() {
+    var list = gm.conversations
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].unread === true) {
+        root.unreadJumpRequested(list[i].id, i)
+        return
+      }
+    }
+  }
 
   function selectConversation(id) {
     if (id === root.selectedConvID) return
@@ -265,6 +306,22 @@ Panel {
     })
   }
 
+  // Only ever one outstanding play request: pressing play on a second message
+  // replaces the first, and audioWaitingKey is what decides which one wins.
+  Timer {
+    id: audioRetry
+    property string key: ""
+    property int attempt: 0
+    interval: 3000
+    repeat: false
+    function schedule(k, a) {
+      key = k
+      attempt = a
+      restart()
+    }
+    onTriggered: if (root.audioWaitingKey === key) root._fetchAudio(key, attempt)
+  }
+
   // Small queue so several pending attachments can be retried independently.
   Timer {
     id: mediaRetry
@@ -364,6 +421,8 @@ Panel {
 
   function openCamera() {
     root.emojiPickerOpen = false
+    if (root.recording) root.cancelRecording()
+    root.stopPlayback()
     // Reopening the camera discards whatever shot is staged, so clean it up
     // rather than leaving full-resolution rejects in the cache.
     root.discardPendingCapture()
@@ -372,12 +431,157 @@ Panel {
     root.cameraOpen = true
   }
 
-  // discardPendingCapture deletes a staged webcam shot. Files picked from disk
-  // belong to the user and are never touched.
+  // discardPendingCapture deletes a staged webcam shot or voice recording.
+  // Files picked from disk belong to the user and are never touched.
   function discardPendingCapture() {
-    if (!root.pendingFromCamera || root.pendingAttachment === "") return
+    if (root.pendingAttachment === "") return
+    if (!root.pendingFromCamera && !root.pendingIsVoice) return
     gm.call("discardCapture", { path: root.pendingAttachment }, null)
     root.pendingFromCamera = false
+    root.pendingIsVoice = false
+  }
+
+  // ---- voice messages ----
+  //
+  // Recording runs as a child ffmpeg process for the same reason webcam capture
+  // does: QtMultimedia's FFmpeg backend segfaults inside the shell, and the
+  // shell also owns the bar and the lock screen.
+  //
+  // The output is AAC in an MP4 container, which is what Google Messages wants
+  // for a voice note -- mautrix's own bridge converts to exactly this before
+  // uploading. That container writes its index last, so the recording has to be
+  // ended by asking ffmpeg to stop ("q" on stdin) rather than by killing it;
+  // a killed process leaves a file with no moov atom, which will not play.
+  function startRecording() {
+    if (root.recording || root.selectedConvID === "") return
+    root.emojiPickerOpen = false
+    root.gifPickerOpen = false
+    root.cameraOpen = false
+    root.threadError = ""
+    // Starting a new recording throws away whatever was staged, same as the
+    // camera does, so rejects do not pile up in the cache.
+    root.discardPendingCapture()
+    root.pendingAttachment = ""
+    root.pendingVoiceSeconds = 0
+    root.recordSeconds = 0
+    root.voicePath = root.captureDir + "/voice-" + Date.now() + ".m4a"
+    var cmd = [
+      "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+      "-f", "pulse", "-i", root.setting("audioDevice", "default"),
+      // 48 kHz is what the capture devices actually run at, so this avoids a
+      // resample on the way in.
+      "-ac", "1", "-ar", "48000"
+    ]
+    if (root.setting("normalizeVoice", true)) {
+      // Recorded speech is usually well below the level a phone plays back at,
+      // which lands as "you sound far away" at the other end. speechnorm lifts
+      // it to a consistent level without the lookahead delay loudnorm needs;
+      // the high-pass takes out desk rumble and handling noise first.
+      cmd.push("-af", "highpass=f=80,speechnorm=e=12.5:r=0.00025:l=1")
+    }
+    cmd.push("-c:a", "aac", "-b:a", "96k",
+             "-t", String(root.maxRecordSeconds),
+             root.voicePath)
+    voiceProc.command = cmd
+    root.recording = true
+    voiceProc.running = true
+    recordTimer.start()
+  }
+
+  // stopRecording ends the take and stages it. keep=false throws it away.
+  function stopRecording(keep) {
+    if (!root.recording) return
+    recordTimer.stop()
+    root.keepRecording = keep === true
+    root.pendingVoiceSeconds = root.recordSeconds
+    root.recording = false
+    // Ask ffmpeg to finish writing. onExited does the staging, because the file
+    // is not complete until the process is gone.
+    try {
+      voiceProc.write("q\n")
+    } catch (e) {
+      // No stdin for some reason; fall back to terminating it. The container
+      // still gets finalised, but the exit code is no longer meaningful.
+      voiceProc.running = false
+    }
+    stopFallbackTimer.restart()
+  }
+
+  function cancelRecording() {
+    root.stopRecording(false)
+  }
+
+  function playPendingVoice() {
+    if (root.pendingAttachment === "") return
+    root._startAudio("staged", root.pendingAttachment)
+  }
+
+  // playAttachment plays a received voice message, fetching it first if the
+  // bytes are not local yet. Audio is not prefetched the way images are --
+  // downloading every voice note in a thread on scroll would be rude -- so the
+  // first press may have to wait for the download.
+  function playAttachment(key) {
+    if (!key) return
+    if (root.playingKey === key) { root.stopPlayback(); return }
+    var path = root.mediaPaths[key]
+    if (path) {
+      root._startAudio(key, path)
+      return
+    }
+    root.stopPlayback()
+    root.audioWaitingKey = key
+    root._fetchAudio(key, 0)
+  }
+
+  // Audio is fetched here rather than through requestMedia. That path marks a
+  // download as in flight by writing an empty path -- the same value it writes
+  // for a failure -- and it dedupes on the key already being present. Both are
+  // fine for an image, which simply appears whenever it arrives. Neither
+  // survives "press play and tell me if it did not work": the empty marker is
+  // written before the request is even sent, so it reads as an instant failure.
+  function _fetchAudio(key, attempt) {
+    gm.call("media", { key: key }, function(ok, res) {
+      // Stopped, or a different message started, while this was in flight.
+      if (root.audioWaitingKey !== key) return
+
+      if (ok && res && res.path && !res.thumbnail) {
+        root._withMedia(key, res.path)
+        root._startAudio(key, res.path)
+        return
+      }
+      // A thumbnail is not the audio, and pending means the phone has been
+      // asked to upload the original and has not finished.
+      var stillComing = ok && res && (res.pending === true || res.thumbnail === true)
+      if (stillComing && attempt < 6) {
+        audioRetry.schedule(key, attempt + 1)
+        return
+      }
+      root.audioWaitingKey = ""
+      root.threadError = stillComing
+        ? "That voice message is still uploading from your phone — try again in a moment."
+        : "That voice message could not be downloaded."
+    })
+  }
+
+  function _startAudio(key, path) {
+    root.stopPlayback()
+    root.audioWaitingKey = ""
+    playProc.command = ["ffplay", "-nodisp", "-autoexit", "-loglevel", "error", path]
+    root.playingKey = key
+    playProc.running = true
+  }
+
+  function stopPlayback() {
+    root.audioWaitingKey = ""
+    if (root.playingKey === "") return
+    root.playingKey = ""
+    playProc.running = false
+  }
+
+  function formatDuration(secs) {
+    var m = Math.floor(secs / 60)
+    var s = secs % 60
+    return m + ":" + (s < 10 ? "0" + s : String(s))
   }
 
   function startCountdown() {
@@ -412,6 +616,68 @@ Panel {
     }
   }
 
+  Timer {
+    id: recordTimer
+    interval: 1000
+    repeat: true
+    onTriggered: {
+      root.recordSeconds += 1
+      // ffmpeg stops itself at -t, so mirror that here rather than letting the
+      // counter run past the file that is actually being written.
+      if (root.recordSeconds >= root.maxRecordSeconds) root.stopRecording(true)
+    }
+  }
+
+  // If ffmpeg ignores the quit request, make sure the UI cannot be left stuck
+  // in a state where the recording never resolves.
+  Timer {
+    id: stopFallbackTimer
+    interval: 3000
+    repeat: false
+    onTriggered: if (voiceProc.running) voiceProc.running = false
+  }
+
+  Process {
+    id: voiceProc
+    stdinEnabled: true
+    onExited: function(code) {
+      stopFallbackTimer.stop()
+      root.recording = false
+      recordTimer.stop()
+      // 255 is what ffmpeg reports when it was asked to stop rather than
+      // reaching the end of its input; the file is still finalised.
+      var ok = (code === 0 || code === 255)
+      if (!root.keepRecording) {
+        // Cancelled: the file was still written, so clean it up.
+        if (root.voicePath !== "") gm.call("discardCapture", { path: root.voicePath }, null)
+        root.voicePath = ""
+        return
+      }
+      if (!ok) {
+        root.threadError = "Recording failed (ffmpeg exit " + code
+          + "). Check that a microphone is available."
+        if (root.voicePath !== "") gm.call("discardCapture", { path: root.voicePath }, null)
+        root.voicePath = ""
+        return
+      }
+      if (root.pendingVoiceSeconds < 1) {
+        root.threadError = "That was too short to send."
+        gm.call("discardCapture", { path: root.voicePath }, null)
+        root.voicePath = ""
+        return
+      }
+      root.pendingFromCamera = false
+      root.pendingIsVoice = true
+      root.pendingAttachment = root.voicePath
+      root.voicePath = ""
+    }
+  }
+
+  Process {
+    id: playProc
+    onExited: root.playingKey = ""
+  }
+
   Process {
     id: captureProc
     onExited: function(code) {
@@ -429,8 +695,10 @@ Panel {
   }
 
   function cancelAttachment() {
+    root.stopPlayback()
     root.discardPendingCapture()
     root.pendingAttachment = ""
+    root.pendingIsVoice = false
     root.cameraOpen = false
   }
 
@@ -445,6 +713,7 @@ Panel {
         if (!ok) { root.threadError = String(res); return }
         root.pendingAttachment = ""
         root.pendingFromCamera = false
+        root.pendingIsVoice = false
         if (convID === root.selectedConvID) {
           var list = root.messages.slice()
           list.push(res)
@@ -929,11 +1198,53 @@ Panel {
           onTextChanged: root.searchQuery = text
         }
 
+        Connections {
+          target: root
+          function onUnreadJumpRequested(convID, index) {
+            // Clear any search first: a filtered model may not contain the
+            // thread at all, and the index is into the unfiltered list.
+            if (searchField.text !== "") searchField.text = ""
+            root.selectConversation(convID)
+            convList.positionViewAtIndex(index, ListView.Contain)
+          }
+        }
+
+        // Appears only when something is unread, so it costs nothing the rest
+        // of the time.
+        Rectangle {
+          id: unreadChip
+          visible: root.unreadConversations > 0
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.top: searchField.bottom
+          anchors.topMargin: Style.space(6)
+          height: visible ? Style.space(28) : 0
+          radius: Style.space(6)
+          color: Style.normalFillFor(root.foreground, Color.accent)
+
+          MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.jumpToUnread()
+          }
+
+          Text {
+            anchors.centerIn: parent
+            text: root.unreadConversations === 1
+              ? "1 unread \u2014 jump to it"
+              : root.unreadConversations + " unread \u2014 jump to the first"
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: true
+          }
+        }
+
         ListView {
           id: convList
           anchors.left: parent.left
           anchors.right: parent.right
-          anchors.top: searchField.bottom
+          anchors.top: unreadChip.visible ? unreadChip.bottom : searchField.bottom
           anchors.bottom: parent.bottom
           anchors.topMargin: Style.space(6)
           clip: true
@@ -1140,8 +1451,21 @@ Panel {
           }
 
           PanelActionButton {
-            id: gifButton
+            id: micButton
             anchors.left: cameraButton.right
+            anchors.leftMargin: Style.space(2)
+            anchors.verticalCenter: parent.verticalCenter
+            iconText: root.recording ? "\u{23F9}" : "\u{1F3A4}"
+            tooltipText: root.recording ? "Stop recording" : "Record a voice message"
+            foreground: root.recording ? "#e06c75" : root.foreground
+            fontFamily: root.fontFamily
+            enabled: composer.enabled && !root.sendingMedia
+            onClicked: root.recording ? root.stopRecording(true) : root.startRecording()
+          }
+
+          PanelActionButton {
+            id: gifButton
+            anchors.left: micButton.right
             anchors.leftMargin: Style.space(2)
             anchors.verticalCenter: parent.verticalCenter
             iconText: "GIF"
@@ -1186,6 +1510,77 @@ Panel {
           }
         }
 
+        // Live recording indicator. There is no waveform: drawing one would mean
+        // reading the audio stream inside the shell, which is the thing that is
+        // not safe to do here, so this shows elapsed time instead.
+        Rectangle {
+          id: recordingBar
+          visible: root.recording && root.selectedConvID !== ""
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.bottom: composerRow.top
+          anchors.bottomMargin: Style.space(6)
+          height: visible ? Style.space(56) : 0
+          z: 111
+          radius: Style.space(8)
+          color: Color.popups.background
+          border.width: 1
+          border.color: "#e06c75"
+
+          MouseArea { anchors.fill: parent; hoverEnabled: true }
+
+          Rectangle {
+            id: recordDot
+            anchors.left: parent.left
+            anchors.leftMargin: Style.space(12)
+            anchors.verticalCenter: parent.verticalCenter
+            width: Style.space(10)
+            height: width
+            radius: width / 2
+            color: "#e06c75"
+            SequentialAnimation on opacity {
+              running: root.recording
+              loops: Animation.Infinite
+              NumberAnimation { from: 1.0; to: 0.25; duration: 600 }
+              NumberAnimation { from: 0.25; to: 1.0; duration: 600 }
+            }
+          }
+
+          Text {
+            anchors.left: recordDot.right
+            anchors.leftMargin: Style.space(10)
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Recording  " + root.formatDuration(root.recordSeconds)
+              + "  /  " + root.formatDuration(root.maxRecordSeconds)
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            font.bold: true
+          }
+
+          Row {
+            anchors.right: parent.right
+            anchors.rightMargin: Style.space(10)
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(6)
+
+            Button {
+              text: "Cancel"
+              foreground: root.dim
+              fontFamily: root.fontFamily
+              onClicked: root.cancelRecording()
+            }
+
+            Button {
+              text: "Stop"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              bordered: true
+              onClicked: root.stopRecording(true)
+            }
+          }
+        }
+
         // Staged attachment: what will be sent, with a caption box and an
         // explicit Send. Nothing is transmitted until this is confirmed.
         Rectangle {
@@ -1195,7 +1590,9 @@ Panel {
           anchors.right: parent.right
           anchors.bottom: composerRow.top
           anchors.bottomMargin: Style.space(6)
-          height: visible ? (root.pendingFromCamera ? Style.space(210) : Style.space(132)) : 0
+          height: visible ? (root.pendingIsVoice ? Style.space(132)
+                             : root.pendingFromCamera ? Style.space(210)
+                             : Style.space(132)) : 0
           z: 110
           radius: Style.space(8)
           color: Color.popups.background
@@ -1217,12 +1614,34 @@ Panel {
             fillMode: Image.PreserveAspectFit
             asynchronous: true
             smooth: true
-            source: root.pendingAttachment !== "" ? "file://" + root.pendingAttachment : ""
+            visible: !root.pendingIsVoice
+            source: (root.pendingAttachment !== "" && !root.pendingIsVoice)
+              ? "file://" + root.pendingAttachment : ""
+          }
+
+          // Stand-in for the image preview when what is staged is audio.
+          Rectangle {
+            id: voicePreview
+            visible: root.pendingIsVoice
+            anchors.left: parent.left
+            anchors.top: parent.top
+            anchors.margins: Style.space(8)
+            height: parent.height - Style.space(16)
+            width: visible ? Style.space(96) : 0
+            radius: Style.space(6)
+            color: Color.popups.border
+
+            Text {
+              anchors.centerIn: parent
+              text: "\u{1F3A4}"
+              font.pixelSize: Style.font.title
+              color: root.foreground
+            }
           }
 
           Text {
             id: attachName
-            anchors.left: attachPreview.right
+            anchors.left: root.pendingIsVoice ? voicePreview.right : attachPreview.right
             anchors.leftMargin: Style.space(10)
             anchors.right: parent.right
             anchors.rightMargin: Style.space(10)
@@ -1230,6 +1649,9 @@ Panel {
             anchors.topMargin: Style.space(10)
             elide: Text.ElideMiddle
             text: {
+              if (root.pendingIsVoice) {
+                return "Voice message  \u00B7  " + root.formatDuration(root.pendingVoiceSeconds)
+              }
               if (root.pendingFromCamera) return "Photo from webcam"
               var p = root.pendingAttachment
               var slash = p.lastIndexOf("/")
@@ -1243,7 +1665,7 @@ Panel {
 
           TextField {
             id: attachCaption
-            anchors.left: attachPreview.right
+            anchors.left: root.pendingIsVoice ? voicePreview.right : attachPreview.right
             anchors.leftMargin: Style.space(10)
             anchors.right: parent.right
             anchors.rightMargin: Style.space(10)
@@ -1261,6 +1683,27 @@ Panel {
             anchors.bottom: parent.bottom
             anchors.bottomMargin: Style.space(10)
             spacing: Style.space(6)
+
+            Button {
+              // Listening back before sending matters more here than for a
+              // photo: there is no preview while recording, so this is the
+              // only chance to hear what is about to be sent.
+              visible: root.pendingIsVoice
+              text: root.playingVoice ? "Stop" : "Play"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              enabled: !root.sendingMedia
+              onClicked: root.playingVoice ? root.stopPlayback() : root.playPendingVoice()
+            }
+
+            Button {
+              visible: root.pendingIsVoice
+              text: "Re-record"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              enabled: !root.sendingMedia
+              onClicked: { root.stopPlayback(); root.startRecording() }
+            }
 
             Button {
               // Straight back to the camera. Without this a bad shot means
@@ -1283,7 +1726,8 @@ Panel {
             }
 
             Button {
-              text: root.sendingMedia ? "Sending…" : "Send image"
+              text: root.sendingMedia ? "Sending…"
+                : root.pendingIsVoice ? "Send voice message" : "Send image"
               foreground: root.foreground
               fontFamily: root.fontFamily
               bordered: true
@@ -1979,8 +2423,13 @@ Panel {
                   && img.implicitWidth > 0
                   && img.implicitWidth < modelData.width * 0.9
 
+                readonly property bool isVoice: modelData.isAudio === true
+                readonly property bool playing: attachment.isVoice && root.playingKey === attachment.mediaKey
+                readonly property bool loading: attachment.isVoice && root.audioWaitingKey === attachment.mediaKey
+
                 width: bubbleContent.width
                 height: {
+                  if (attachment.isVoice) return Style.space(40)
                   if (!modelData.isImage) return Style.space(24)
                   if (img.status === Image.Ready) return img.height + (isPreview ? Style.space(18) : 0)
                   return Style.space(120)
@@ -1989,6 +2438,51 @@ Panel {
                 // Bytes are fetched only once the attachment is realised, so
                 // opening a long thread does not pull every image in it.
                 Component.onCompleted: if (modelData.isImage) root.requestMedia(attachment.mediaKey)
+
+                // Voice message. Bytes are fetched on first press rather than
+                // on scroll, so a thread full of voice notes is not downloaded
+                // just by looking at it.
+                Rectangle {
+                  id: voiceRow
+                  visible: attachment.isVoice
+                  anchors.left: parent.left
+                  anchors.top: parent.top
+                  width: Math.min(parent.width, Style.space(220))
+                  height: Style.space(34)
+                  radius: height / 2
+                  color: Style.normalFillFor(root.foreground, Color.accent)
+
+                  MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.playAttachment(attachment.mediaKey)
+                  }
+
+                  Text {
+                    id: voiceGlyph
+                    anchors.left: parent.left
+                    anchors.leftMargin: Style.space(12)
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: attachment.playing ? "\u{23F9}" : "\u{25B6}"
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                  }
+
+                  Text {
+                    anchors.left: voiceGlyph.right
+                    anchors.leftMargin: Style.space(10)
+                    anchors.right: parent.right
+                    anchors.rightMargin: Style.space(10)
+                    anchors.verticalCenter: parent.verticalCenter
+                    elide: Text.ElideRight
+                    text: attachment.loading ? "Fetching\u2026"
+                      : attachment.playing ? "Playing\u2026" : "Voice message"
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                  }
+                }
 
                 Image {
                   id: img
@@ -2024,7 +2518,7 @@ Panel {
                 // failed image reads as "loading" rather than as a blank bubble.
                 Rectangle {
                   anchors.fill: parent
-                  visible: attachment.pending
+                  visible: attachment.pending && !attachment.isVoice
                   radius: Style.space(6)
                   color: Style.normalFillFor(root.foreground, Color.accent)
 

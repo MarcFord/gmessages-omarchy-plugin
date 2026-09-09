@@ -144,6 +144,7 @@ type Attachment struct {
 	Width    int64  `json:"width,omitempty"`
 	Height   int64  `json:"height,omitempty"`
 	IsImage  bool   `json:"isImage"`
+	IsAudio  bool   `json:"isAudio"`
 	Path     string `json:"path,omitempty"`
 }
 

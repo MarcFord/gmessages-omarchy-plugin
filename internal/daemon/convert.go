@@ -93,6 +93,10 @@ func isImageMime(mime string) bool {
 	return strings.HasPrefix(mime, "image/")
 }
 
+func isAudioMime(mime string) bool {
+	return strings.HasPrefix(mime, "audio/")
+}
+
 // convertMessage flattens a protobuf message, joining its text parts and
 // listing its media parts. Media is referenced by ID only — the plugin asks
 // for bytes separately so opening a thread stays cheap.
@@ -116,6 +120,7 @@ func convertMessage(msg *gmproto.Message, senderName string) wire.Message {
 				Width:    md.GetDimensions().GetWidth(),
 				Height:   md.GetDimensions().GetHeight(),
 				IsImage:  isImageMime(md.GetMimeType()),
+				IsAudio:  isAudioMime(md.GetMimeType()),
 			})
 		}
 	}
