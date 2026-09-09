@@ -44,6 +44,8 @@ type Daemon struct {
 	// whether tapping an emoji adds, removes, or switches.
 	reactMu   sync.RWMutex
 	reactions map[string][]reactionRecord
+	// reactionOrder bounds the map above; see trimReactionsLocked.
+	reactionOrder []string
 
 	// pairGeneration increments on every completed pairing. An automatic
 	// re-pair waits on this rather than on the connection state: the long poll

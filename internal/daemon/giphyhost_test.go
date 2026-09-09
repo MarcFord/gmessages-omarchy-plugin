@@ -1,0 +1,54 @@
+package daemon
+
+import "testing"
+
+// The URL being fetched comes from a search response, so the allowlist is the
+// only thing keeping this pointed at Giphy. A plain suffix check on
+// "giphy.com" also accepts evilgiphy.com.
+func TestIsGiphyHost(t *testing.T) {
+	allow := []string{"giphy.com", "media.giphy.com", "i.giphy.com", "MEDIA.GIPHY.COM", "giphy.com."}
+	for _, h := range allow {
+		if !isGiphyHost(h) {
+			t.Errorf("%q should be allowed", h)
+		}
+	}
+	refuse := []string{
+		"evilgiphy.com", "not-giphy.com", "giphy.com.attacker.net",
+		"giphy.co", "notgiphy.com", "", "attacker.net",
+	}
+	for _, h := range refuse {
+		if isGiphyHost(h) {
+			t.Errorf("%q must be refused", h)
+		}
+	}
+}
+
+// Search results are used two different ways: the panel loads the preview
+// directly, and the send URL goes through GifFetch. Both have to be checked
+// here or the allowlist only covers one of them.
+func TestIsAllowedGiphyURL(t *testing.T) {
+	allow := []string{
+		"https://media.giphy.com/media/x/giphy.gif",
+		"https://i.giphy.com/x.gif",
+		"https://giphy.com/x.gif",
+	}
+	for _, u := range allow {
+		if !isAllowedGiphyURL(u) {
+			t.Errorf("%q should be allowed", u)
+		}
+	}
+	refuse := []string{
+		"http://media.giphy.com/x.gif", // not https
+		"https://evilgiphy.com/x.gif",
+		"https://attacker.net/x.gif",
+		"https://127.0.0.1/x.gif",
+		"file:///etc/passwd",
+		"",
+		"://broken",
+	}
+	for _, u := range refuse {
+		if isAllowedGiphyURL(u) {
+			t.Errorf("%q must be refused", u)
+		}
+	}
+}

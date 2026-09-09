@@ -343,6 +343,8 @@ send.
 | Outgoing upload | 25 MB | Rejected before upload; carriers reject larger anyway |
 | Incoming attachment | 32 MB | Read through a bounded reader, so an oversized or unbounded response is refused rather than allocated |
 | Attachment cache | 256 MB | Trimmed oldest-first after each write |
+| Webcam photos and recordings | 64 MB | Same trim; a sent one is deleted immediately |
+| Avatar | 4 MB | Fetched only over https, and only from a public address |
 | Voice recording | 5 minutes | `ffmpeg` stops itself at the cap |
 
 The incoming limit is enforced on the response body as it is read, not from the
@@ -351,11 +353,60 @@ more, or declare nothing at all. The size a message *claims* an attachment is
 gets used only as an early short-circuit, to avoid opening a connection for
 something already known to be too big.
 
-This means the plugin does not call `libgm`'s `DownloadMedia`, which reads the
+A group's avatar URL arrives in conversation data, which means whoever
+controls the group controls the URL the daemon is asked to fetch. That request
+is refused unless it is `https`, and the connection is checked at dial time
+against the address actually resolved — loopback, private, link-local (cloud
+metadata) and carrier-grade NAT ranges are all refused, so the daemon cannot be
+turned into a request generator pointed at your own network.
+
+This means the plugin does not call `libgm`'s `DownloadMedia` or `DownloadAvatar`, which reads the
 whole body with `io.ReadAll` and whose HTTP client is not reachable from
 outside that package. `internal/daemon/download.go` issues the same request
 using `libgm`'s own exported helpers and decryption, and differs only in
 reading through an `io.LimitReader`.
+
+## Security notes
+
+Everything below is either enforced in code or a deliberate, stated decision.
+
+**Nothing from the network sizes an allocation.** Attachment downloads, inline
+media, avatars and GIF fetches all read through a bounded reader. A declared
+size is only ever used to refuse early; it is never trusted as the actual
+bound.
+
+**URLs that arrive in data are not followed blindly.** A group avatar URL comes
+from conversation data, so it must be `https` and must resolve to a public
+address — checked at dial time, against the address actually connected to, so a
+hostname resolving to loopback does not slip through. GIF URLs, which come from
+a search response, must be `https` on `giphy.com` or a subdomain; both the
+preview the panel loads and the URL the daemon fetches are checked.
+
+**Child processes are never handed a shell.** Every one is spawned with an
+argument array. The SQL used to read the browser cookie database is a constant.
+
+**Secrets stay out of logs and errors.** An error names *which* cookie is
+missing, never its value. Session and config files are `0600`, their
+directories `0700`, and the control socket is `0600`, so only your own account
+can talk to the daemon.
+
+**In-memory state is bounded.** Attachment secrets and reaction records are
+capped and evicted oldest-first, rather than keeping every message the daemon
+has ever seen — along with its decryption keys — for the life of the process.
+
+### Accepted, and why
+
+- **The daemon will read and upload any path the panel hands it.** That is the
+  file picker working as intended, and reaching the socket already requires
+  your account.
+- **Widget settings become process arguments** (the audio and camera device
+  names, the systemd unit to start). Changing them requires write access to
+  your own config, which is a larger problem than this plugin.
+- **A copy of the browser cookie database is made in `/tmp`** to read it while
+  the browser holds a lock. It is `0600`, deleted immediately, and the unit
+  sets `PrivateTmp=yes`, so it is not visible to the rest of the system.
+- **`libgm` is a reverse-engineered client.** Google can change or break the
+  protocol without notice.
 
 ## Deliberate limits
 

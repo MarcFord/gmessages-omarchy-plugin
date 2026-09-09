@@ -32,6 +32,7 @@ func (d *Daemon) recordReactions(msg *gmproto.Message) {
 		delete(d.reactions, id)
 		return
 	}
+
 	records := make([]reactionRecord, 0, len(entries))
 	for _, e := range entries {
 		records = append(records, reactionRecord{
@@ -39,7 +40,28 @@ func (d *Daemon) recordReactions(msg *gmproto.Message) {
 			participants: e.GetParticipantIDs(),
 		})
 	}
+	if _, seen := d.reactions[id]; !seen {
+		d.reactionOrder = append(d.reactionOrder, id)
+	}
 	d.reactions[id] = records
+	d.trimReactionsLocked()
+}
+
+// maxReactionRecords caps how many messages' reactions are remembered. Like
+// the media secrets, this map only ever grew: every reacted-to message the
+// daemon saw stayed in memory for the life of the process.
+const maxReactionRecords = 4096
+
+// trimReactionsLocked must be called with reactMu held.
+func (d *Daemon) trimReactionsLocked() {
+	for len(d.reactionOrder) > maxReactionRecords {
+		oldest := d.reactionOrder[0]
+		d.reactionOrder = d.reactionOrder[1:]
+		delete(d.reactions, oldest)
+	}
+	if cap(d.reactionOrder) > 4*maxReactionRecords {
+		d.reactionOrder = append(make([]string, 0, len(d.reactionOrder)), d.reactionOrder...)
+	}
 }
 
 // markMyReactions flags which reactions on a message are the user's own.

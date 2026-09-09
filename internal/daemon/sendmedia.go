@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -53,9 +54,20 @@ func (d *Daemon) SendMedia(ctx context.Context, p wire.SendMediaParams) (*wire.M
 			info.Size()>>20, maxUploadBytes>>20)
 	}
 
-	data, err := os.ReadFile(p.Path)
+	// Read through a bounded reader rather than trusting the Stat above: the
+	// size check and the read are two separate observations of the file, and
+	// the limit is what decides how much memory this allocates.
+	f, err := os.Open(p.Path)
 	if err != nil {
 		return nil, fmt.Errorf("read file: %w", err)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxUploadBytes+1))
+	f.Close()
+	if err != nil {
+		return nil, fmt.Errorf("read file: %w", err)
+	}
+	if len(data) > maxUploadBytes {
+		return nil, fmt.Errorf("file is too large; the limit is %d MB", maxUploadBytes>>20)
 	}
 	if len(data) == 0 {
 		return nil, errors.New("file is empty")
@@ -104,6 +116,13 @@ func (d *Daemon) SendMedia(ctx context.Context, p wire.SendMediaParams) (*wire.M
 	}
 	if status := resp.GetStatus(); status != gmproto.SendMessageResponse_SUCCESS {
 		return nil, fmt.Errorf("send rejected: %s", status)
+	}
+
+	// A capture that has been sent has done its job. Without this every voice
+	// note and webcam photo ever sent stays in the cache for good -- the panel
+	// only deletes the ones the user cancels.
+	if err := d.DiscardCapture(p.Path); err != nil {
+		d.log.Debug().Err(err).Msg("Sent file was not one of ours to delete")
 	}
 
 	d.log.Info().

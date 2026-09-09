@@ -148,6 +148,14 @@ func (d *Daemon) GifSearch(ctx context.Context, p wire.GifSearchParams) (*wire.G
 		if preview.URL == "" || send == "" {
 			continue
 		}
+		// The panel loads the preview directly, so it never reaches GifFetch's
+		// checks. Validate both here or the allowlist only covers half the
+		// feature: a search response naming any host would have the shell
+		// fetch it.
+		if !isAllowedGiphyURL(preview.URL) || !isAllowedGiphyURL(send) {
+			d.log.Debug().Msg("Dropped a GIF result pointing outside GIPHY")
+			continue
+		}
 		out.Gifs = append(out.Gifs, wire.Gif{
 			ID:            parsed.Data[i].ID,
 			Title:         parsed.Data[i].Title,
@@ -171,7 +179,7 @@ func (d *Daemon) GifFetch(ctx context.Context, p wire.GifFetchParams) (string, e
 	if err != nil || parsed.Scheme != "https" {
 		return "", errors.New("refusing to fetch a non-https URL")
 	}
-	if !strings.HasSuffix(parsed.Hostname(), "giphy.com") {
+	if !isGiphyHost(parsed.Hostname()) {
 		return "", fmt.Errorf("refusing to fetch from %q", parsed.Hostname())
 	}
 
@@ -215,4 +223,24 @@ func (d *Daemon) GifFetch(ctx context.Context, p wire.GifFetchParams) (string, e
 // next search reports plainly if GIPHY rejects it.
 func (d *Daemon) SetGiphyKey(key string) error {
 	return d.config.SetGiphyAPIKey(strings.TrimSpace(key))
+}
+
+// isGiphyHost matches giphy.com and its subdomains, and nothing else.
+//
+// A plain HasSuffix check on "giphy.com" also accepts evilgiphy.com and
+// not-giphy.com, which is the whole allowlist gone: the URL being checked
+// comes from a search response, so it is not ours to trust.
+func isGiphyHost(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	return host == "giphy.com" || strings.HasSuffix(host, ".giphy.com")
+}
+
+// isAllowedGiphyURL is the whole check -- https and a GIPHY host -- for a URL
+// that came out of a search response.
+func isAllowedGiphyURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" {
+		return false
+	}
+	return isGiphyHost(u.Hostname())
 }

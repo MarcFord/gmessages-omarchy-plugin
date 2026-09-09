@@ -111,14 +111,20 @@ func (d *Daemon) downloadMediaBounded(ctx context.Context, mediaID string, key [
 // actually holds, and it reads one byte past the cap so that hitting the cap
 // is distinguishable from landing exactly on it.
 func readBounded(contentLength int64, body io.Reader) ([]byte, error) {
-	if contentLength > maxDownloadBytes {
+	return readBoundedTo(maxDownloadBytes, contentLength, body)
+}
+
+// readBoundedTo is readBounded with the cap given explicitly, so avatars can
+// use a much smaller one.
+func readBoundedTo(limit int, contentLength int64, body io.Reader) ([]byte, error) {
+	if contentLength > int64(limit) {
 		return nil, fmt.Errorf("%w (%d MB declared)", errAttachmentTooLarge, contentLength>>20)
 	}
-	data, err := io.ReadAll(io.LimitReader(body, maxDownloadBytes+1))
+	data, err := io.ReadAll(io.LimitReader(body, int64(limit)+1))
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
-	if len(data) > maxDownloadBytes {
+	if len(data) > limit {
 		return nil, errAttachmentTooLarge
 	}
 	return data, nil
