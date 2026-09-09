@@ -343,6 +343,8 @@ send.
 | Outgoing upload | 25 MB | Rejected before upload; carriers reject larger anyway |
 | Incoming attachment | 32 MB | Read through a bounded reader, so an oversized or unbounded response is refused rather than allocated |
 | Attachment cache | 256 MB | Trimmed oldest-first after each write |
+| Webcam photos and recordings | 64 MB | Same trim; a sent one is deleted immediately |
+| Avatar | 4 MB | Fetched only over https, and only from a public address |
 | Voice recording | 5 minutes | `ffmpeg` stops itself at the cap |
 
 The incoming limit is enforced on the response body as it is read, not from the
@@ -351,7 +353,14 @@ more, or declare nothing at all. The size a message *claims* an attachment is
 gets used only as an early short-circuit, to avoid opening a connection for
 something already known to be too big.
 
-This means the plugin does not call `libgm`'s `DownloadMedia`, which reads the
+A group's avatar URL arrives in conversation data, which means whoever
+controls the group controls the URL the daemon is asked to fetch. That request
+is refused unless it is `https`, and the connection is checked at dial time
+against the address actually resolved — loopback, private, link-local (cloud
+metadata) and carrier-grade NAT ranges are all refused, so the daemon cannot be
+turned into a request generator pointed at your own network.
+
+This means the plugin does not call `libgm`'s `DownloadMedia` or `DownloadAvatar`, which reads the
 whole body with `io.ReadAll` and whose HTTP client is not reachable from
 outside that package. `internal/daemon/download.go` issues the same request
 using `libgm`'s own exported helpers and decryption, and differs only in

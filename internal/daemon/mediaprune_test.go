@@ -83,3 +83,28 @@ func TestPruneMissingDirIsNotAnError(t *testing.T) {
 		t.Errorf("a missing cache dir should be a no-op, got %v", err)
 	}
 }
+
+// The capture directory is the cache root, which also holds session.json and
+// config.json. Trimming it must touch only files this plugin created.
+func TestPruneDirLeavesForeignFilesAlone(t *testing.T) {
+	dir := t.TempDir()
+
+	session := writeCacheFile(t, dir, "session.json", 16, 10*time.Hour)
+	config := writeCacheFile(t, dir, "config.json", 16, 10*time.Hour)
+	// Well over the cap, and the oldest things present.
+	old1 := writeCacheFile(t, dir, "voice-1.m4a", 40<<20, 9*time.Hour)
+	writeCacheFile(t, dir, "webcam-2.jpg", 40<<20, 1*time.Hour)
+
+	if _, err := pruneDir(dir, maxCaptureBytes, isOwnCapture); err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+
+	for _, p := range []string{session, config} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("%s must never be deleted by a cache trim", filepath.Base(p))
+		}
+	}
+	if _, err := os.Stat(old1); !os.IsNotExist(err) {
+		t.Error("the oldest capture should have been evicted")
+	}
+}

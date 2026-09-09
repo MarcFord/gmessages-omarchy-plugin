@@ -144,7 +144,7 @@ func (d *Daemon) fetchOneAvatar(ctx context.Context, src avatarSource) ([]byte, 
 		return nil, err
 	}
 	if src.groupURL != "" {
-		return c.DownloadAvatar(ctx, src.groupURL)
+		return d.fetchGroupAvatar(ctx, src.groupURL)
 	}
 	resp, err := c.GetParticipantThumbnail(ctx, src.participantID)
 	if err != nil {

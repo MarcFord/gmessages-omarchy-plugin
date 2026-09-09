@@ -269,7 +269,7 @@ func (d *Daemon) Media(ctx context.Context, p wire.MediaParams) (*wire.MediaResu
 	}
 	// Trim the cache after each write rather than on a timer, so the bound
 	// holds even if the daemon never idles.
-	if freed, pruneErr := d.media.prune(); pruneErr != nil {
+	if freed, pruneErr := d.pruneCaches(); pruneErr != nil {
 		d.log.Warn().Err(pruneErr).Msg("Could not trim the attachment cache")
 	} else if freed > 0 {
 		d.log.Debug().Int64("freed_bytes", freed).Msg("Trimmed the attachment cache")

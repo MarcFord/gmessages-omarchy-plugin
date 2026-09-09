@@ -171,7 +171,7 @@ func (d *Daemon) GifFetch(ctx context.Context, p wire.GifFetchParams) (string, e
 	if err != nil || parsed.Scheme != "https" {
 		return "", errors.New("refusing to fetch a non-https URL")
 	}
-	if !strings.HasSuffix(parsed.Hostname(), "giphy.com") {
+	if !isGiphyHost(parsed.Hostname()) {
 		return "", fmt.Errorf("refusing to fetch from %q", parsed.Hostname())
 	}
 
@@ -215,4 +215,14 @@ func (d *Daemon) GifFetch(ctx context.Context, p wire.GifFetchParams) (string, e
 // next search reports plainly if GIPHY rejects it.
 func (d *Daemon) SetGiphyKey(key string) error {
 	return d.config.SetGiphyAPIKey(strings.TrimSpace(key))
+}
+
+// isGiphyHost matches giphy.com and its subdomains, and nothing else.
+//
+// A plain HasSuffix check on "giphy.com" also accepts evilgiphy.com and
+// not-giphy.com, which is the whole allowlist gone: the URL being checked
+// comes from a search response, so it is not ours to trust.
+func isGiphyHost(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	return host == "giphy.com" || strings.HasSuffix(host, ".giphy.com")
 }
