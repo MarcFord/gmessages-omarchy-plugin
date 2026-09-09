@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/MarcFord/gmessages-omarchy-plugin/security/advisories/new
+    about: Report privately, not in a public issue.
+  - name: Marketplace listing
+    url: https://omarchyplugins.com/plugin.html?id=marcford.gmessages
+    about: The published listing for this plugin.
+  - name: Google Messages protocol issues
+    url: https://github.com/mautrix/gmessages
+    about: This plugin uses libgm. Protocol-level problems belong upstream.

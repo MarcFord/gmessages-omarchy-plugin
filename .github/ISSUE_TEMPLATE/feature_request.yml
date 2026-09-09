@@ -1,0 +1,36 @@
+name: Feature request
+description: Suggest something the plugin should do
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: |
+        The situation, rather than the solution. It is often possible to solve
+        the underlying problem a simpler way than the feature first imagined.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you have in mind
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        Worth knowing before you write: anything needing a live preview in the
+        panel is constrained. QtWebEngine and QtMultimedia both crash the
+        Quickshell process, which owns the bar and the lock screen, so media
+        work runs as child `ffmpeg` processes with no in-shell preview.
+
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Would you be willing to work on it
+      options:
+        - label: I would be up for attempting a pull request
+          required: false

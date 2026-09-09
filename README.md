@@ -484,8 +484,30 @@ You can drive the daemon by hand:
 printf '{"id":"1","method":"status"}\n' | socat - UNIX-CONNECT:/tmp/gm.sock
 ```
 
-QML changes under `~/.config/omarchy/plugins/` hot-reload on save. If a change
-does not take, force it with `omarchy-shell shell rescanPlugins`.
+**QML changes do not hot-reload.** Omarchy launches Quickshell with
+`QS_DISABLE_FILE_WATCHER=1`, so after editing any `.qml` file you need:
+
+```bash
+make install-plugin && omarchy-restart-shell
+```
+
+`omarchy plugin disable`/`enable` and `omarchy-shell shell rescanPlugins` look
+like they work — the log even says `Local plugin changed, reloading` — but they
+only re-instantiate objects from QML already compiled in memory, so your edit is
+not loaded. If a change appears to do nothing, that is why.
+
+[CONTRIBUTING.md](CONTRIBUTING.md) covers this and three other things that will
+otherwise waste an evening.
+
+## Contributing
+
+Bug reports and patches are both welcome, and so is telling me something is
+wrong without a fix attached.
+
+- [CONTRIBUTING.md](CONTRIBUTING.md) — how to build, test and install it, and
+  four things about Quickshell that will otherwise waste an evening
+- [SECURITY.md](SECURITY.md) — how to report a vulnerability privately
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 
 ## Credits
 

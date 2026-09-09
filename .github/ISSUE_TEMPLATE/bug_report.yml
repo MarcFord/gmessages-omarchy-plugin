@@ -1,0 +1,87 @@
+name: Bug report
+description: Something is broken or behaving unexpectedly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. The two things that help most are the daemon log
+        and knowing whether the daemon or the panel is at fault — the fields
+        below are aimed at that.
+
+        **Do not report a security vulnerability here.** See
+        [SECURITY.md](https://github.com/MarcFord/gmessages-omarchy-plugin/blob/main/SECURITY.md).
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: daemon-status
+    attributes:
+      label: Daemon status
+      description: Output of the command below. It shows whether the daemon is running and paired.
+      value: |
+        <!-- systemctl --user status gmessagesd --no-pager | head -20 -->
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Daemon log
+      description: |
+        `journalctl --user -u gmessagesd --since "-15min" --no-pager | tail -50`
+
+        Please skim it before pasting. It should not contain credentials —
+        cookie values are never logged — but it does contain conversation IDs.
+      render: shell
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part is affected
+      options:
+        - Not sure
+        - Pairing / staying paired
+        - Reading messages or the conversation list
+        - Sending messages
+        - Images and attachments
+        - Voice messages
+        - GIFs
+        - The bar widget or unread badge
+        - Install / systemd
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Plugin version
+      description: "`gmessagesd --version`, or the release you installed."
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      value: |
+        - Omarchy version:
+        - Browser used for pairing (Chrome / Chromium / Brave):
+        - Anything unusual about the setup:
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I restarted the shell (`omarchy-restart-shell`) if this followed an update — QML changes do not hot-reload
+          required: false
+        - label: I checked this is not already reported
+          required: true
