@@ -46,6 +46,11 @@ type mediaCache struct {
 
 	mu      sync.Mutex
 	secrets map[string]mediaSecret
+	// order records insertion order so the oldest secret can be dropped once
+	// the map hits its cap. Without it, every attachment ever seen is kept
+	// alive for the life of the process -- along with its decryption keys and
+	// any inline bytes -- and a long-lived daemon grows without bound.
+	order []string
 	// inflight collapses concurrent requests for the same attachment.
 	inflight map[string]chan struct{}
 	// requested tracks full-size requests already sent to the phone.
@@ -86,6 +91,9 @@ func (m *mediaCache) record(msg *gmproto.Message) {
 		if key == "" {
 			continue
 		}
+		if _, seen := m.secrets[key]; !seen {
+			m.order = append(m.order, key)
+		}
 		m.secrets[key] = mediaSecret{
 			mediaID:   md.GetMediaID(),
 			key:       md.GetDecryptionKey(),
@@ -98,6 +106,26 @@ func (m *mediaCache) record(msg *gmproto.Message) {
 			partID:    part.GetActionMessageID(),
 			size:      md.GetSize(),
 		}
+	}
+	m.trimLocked()
+}
+
+// maxSecrets caps how many attachments are remembered. Scrolling back further
+// than this simply re-reads the message, which the daemon already does; the
+// cost of forgetting is a round trip, and the cost of not forgetting is
+// unbounded memory holding key material.
+const maxSecrets = 4096
+
+func (m *mediaCache) trimLocked() {
+	for len(m.order) > maxSecrets {
+		oldest := m.order[0]
+		m.order = m.order[1:]
+		delete(m.secrets, oldest)
+		delete(m.requested, oldest)
+	}
+	// The backing array keeps every key ever appended alive otherwise.
+	if cap(m.order) > 4*maxSecrets {
+		m.order = append(make([]string, 0, len(m.order)), m.order...)
 	}
 }
 

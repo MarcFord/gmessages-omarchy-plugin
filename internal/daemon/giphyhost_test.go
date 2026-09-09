@@ -22,3 +22,33 @@ func TestIsGiphyHost(t *testing.T) {
 		}
 	}
 }
+
+// Search results are used two different ways: the panel loads the preview
+// directly, and the send URL goes through GifFetch. Both have to be checked
+// here or the allowlist only covers one of them.
+func TestIsAllowedGiphyURL(t *testing.T) {
+	allow := []string{
+		"https://media.giphy.com/media/x/giphy.gif",
+		"https://i.giphy.com/x.gif",
+		"https://giphy.com/x.gif",
+	}
+	for _, u := range allow {
+		if !isAllowedGiphyURL(u) {
+			t.Errorf("%q should be allowed", u)
+		}
+	}
+	refuse := []string{
+		"http://media.giphy.com/x.gif", // not https
+		"https://evilgiphy.com/x.gif",
+		"https://attacker.net/x.gif",
+		"https://127.0.0.1/x.gif",
+		"file:///etc/passwd",
+		"",
+		"://broken",
+	}
+	for _, u := range refuse {
+		if isAllowedGiphyURL(u) {
+			t.Errorf("%q must be refused", u)
+		}
+	}
+}

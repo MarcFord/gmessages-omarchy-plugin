@@ -12,4 +12,5 @@ cookies.json
 
 # Captured or downloaded media
 webcam-*.jpg
+voice-*.m4a
 pairing-qr.png
