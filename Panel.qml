@@ -1139,6 +1139,10 @@ Panel {
       // The unit name is configurable, so build the command from the same
       // setting the autostart logic uses rather than hardcoding it.
       readonly property string startCommand: "systemctl --user start " + (gm.serviceName || "gmessagesd.service")
+      // Deep link to the setup docs: installing as a plugin repo leaves the
+      // daemon unbuilt (the QML alone does nothing), which is the most common
+      // reason for landing on this screen.
+      readonly property string setupUrl: "https://github.com/MarcFord/gmessages-omarchy-plugin#install"
       property bool commandCopied: false
 
       function copyStartCommand() {
@@ -1237,6 +1241,27 @@ Panel {
             fontFamily: root.fontFamily
             bordered: true
             onClicked: gm.reconnect()
+          }
+        }
+
+        // A text link to the setup docs rather than a third button, so it
+        // reads as documentation rather than as another action. A plain Text
+        // with its own MouseArea rather than a RichText anchor: Text.linkColor
+        // did not apply in the shell (the link stayed default blue on dark,
+        // unreadable), while this renders in the theme foreground for sure.
+        Text {
+          anchors.horizontalCenter: parent.horizontalCenter
+          text: "Setup guide"
+          color: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.bodySmall
+          font.underline: true
+
+          MouseArea {
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: Qt.openUrlExternally(daemonDownRoot.setupUrl)
           }
         }
       }
