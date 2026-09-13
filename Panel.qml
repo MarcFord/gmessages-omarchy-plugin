@@ -1135,6 +1135,24 @@ Panel {
     id: daemonDownView
 
     Item {
+      id: daemonDownRoot
+      // The unit name is configurable, so build the command from the same
+      // setting the autostart logic uses rather than hardcoding it.
+      readonly property string startCommand: "systemctl --user start " + (gm.serviceName || "gmessagesd.service")
+      property bool commandCopied: false
+
+      function copyStartCommand() {
+        Quickshell.clipboardText = daemonDownRoot.startCommand
+        daemonDownRoot.commandCopied = true
+        commandCopiedTimer.restart()
+      }
+
+      Timer {
+        id: commandCopiedTimer
+        interval: 1200
+        onTriggered: daemonDownRoot.commandCopied = false
+      }
+
       Column {
         anchors.centerIn: parent
         spacing: Style.space(10)
@@ -1154,19 +1172,72 @@ Panel {
           width: parent.width
           horizontalAlignment: Text.AlignHCenter
           wrapMode: Text.WordWrap
-          text: "Start it with:  systemctl --user start gmessagesd"
+          text: "Start it with:"
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.bodySmall
         }
 
-        Button {
+        // A read-only TextEdit rather than a Text: Text cannot be selected
+        // at all, so the command could be read but never highlighted or
+        // copied. Same pattern as the message bubbles below.
+        TextEdit {
+          width: parent.width
+          height: implicitHeight
+          horizontalAlignment: TextEdit.AlignHCenter
+          wrapMode: TextEdit.Wrap
+          textFormat: TextEdit.PlainText
+          text: daemonDownRoot.startCommand
+          color: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.bodySmall
+
+          readOnly: true
+          selectByMouse: true
+          selectionColor: Style.selectedFillFor(root.foreground, Color.accent)
+          selectedTextColor: root.foreground
+          activeFocusOnPress: true
+          cursorVisible: false
+
+          onSelectedTextChanged: root.textSelected = selectedText !== ""
+
+          // Copy explicitly rather than relying on the default handler:
+          // the panel's key catcher sits above this and would otherwise
+          // swallow the shortcut.
+          Keys.onPressed: function(event) {
+            if (event.key === Qt.Key_C && (event.modifiers & Qt.ControlModifier)) {
+              if (selectedText !== "") {
+                Quickshell.clipboardText = selectedText
+                daemonDownRoot.commandCopied = true
+                commandCopiedTimer.restart()
+              }
+              event.accepted = true
+            } else if (event.key === Qt.Key_A && (event.modifiers & Qt.ControlModifier)) {
+              selectAll()
+              event.accepted = true
+            }
+          }
+        }
+
+        Row {
           anchors.horizontalCenter: parent.horizontalCenter
-          text: "Retry"
-          foreground: root.foreground
-          fontFamily: root.fontFamily
-          bordered: true
-          onClicked: gm.reconnect()
+          spacing: Style.space(8)
+
+          Button {
+            text: daemonDownRoot.commandCopied ? "Copied" : "Copy command"
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            bordered: true
+            onClicked: daemonDownRoot.copyStartCommand()
+          }
+
+          Button {
+            text: "Retry"
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            bordered: true
+            onClicked: gm.reconnect()
+          }
         }
       }
     }
