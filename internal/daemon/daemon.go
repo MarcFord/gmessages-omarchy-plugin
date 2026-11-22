@@ -13,6 +13,7 @@ import (
 	"go.mau.fi/mautrix-gmessages/pkg/libgm"
 	"go.mau.fi/mautrix-gmessages/pkg/libgm/events"
 	"go.mau.fi/mautrix-gmessages/pkg/libgm/gmproto"
+	"go.mau.fi/util/exhttp"
 
 	"github.com/MarcFord/gmessages-omarchy-plugin/internal/store"
 	"github.com/MarcFord/gmessages-omarchy-plugin/internal/wire"
@@ -112,7 +113,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 	}
 	d.mu.Lock()
 	d.auth = auth
-	d.client = libgm.NewClient(auth, nil, d.log.With().Str("component", "libgm").Logger())
+	d.client = libgm.NewClient(auth, nil, d.log.With().Str("component", "libgm").Logger(), exhttp.SensibleClientSettings)
 	d.client.SetEventHandler(d.handleEvent)
 	d.mu.Unlock()
 
@@ -128,7 +129,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 	d.mu.Unlock()
 
 	d.setState(wire.StateConnecting, "")
-	if err := d.client.Connect(); err != nil {
+	if err := d.client.Connect(ctx); err != nil {
 		// A failed connect is recoverable (phone offline, token expired), so
 		// surface it rather than exiting; the plugin shows a retry affordance.
 		d.setState(wire.StateError, err.Error())
