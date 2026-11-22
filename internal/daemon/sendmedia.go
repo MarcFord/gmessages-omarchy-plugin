@@ -77,7 +77,7 @@ func (d *Daemon) SendMedia(ctx context.Context, p wire.SendMediaParams) (*wire.M
 	mime := detectMime(data, fileName)
 
 	media, err := withAuthRetry(d, func() (*gmproto.MediaContent, error) {
-		return c.UploadMedia(data, fileName, mime)
+		return c.UploadMedia(ctx, data, fileName, mime)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("upload: %w", err)
