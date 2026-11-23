@@ -70,6 +70,13 @@ func (d *Daemon) StartGaiaPairing(cookies map[string]string) error {
 			d.publish(wire.EventEmoji, map[string]string{"emoji": emoji})
 		})
 		if err != nil {
+			// DoGaiaPairing started a long poll bound to ctx. Once ctx expires
+			// that poll retries forever with "context deadline exceeded", so it
+			// has to be stopped here.
+			c.Disconnect()
+			if d.resumeSession() {
+				return
+			}
 			if errors.Is(err, context.DeadlineExceeded) {
 				d.log.Warn().Msg("Gaia pairing timed out waiting for the phone")
 				d.setState(wire.StateUnpaired,
@@ -89,6 +96,34 @@ func (d *Daemon) StartGaiaPairing(cookies map[string]string) error {
 	}()
 
 	return nil
+}
+
+// resumeSession reconnects with the stored session after a pairing attempt
+// failed. Automatic re-pairing starts as soon as Google rejects a request, but
+// that rejection does not always mean the session is gone: opening
+// messages.google.com/web in a browser takes the session over, and a plain
+// reconnect afterwards can work again with no phone prompt. Returns false when
+// there is no stored session to go back to.
+func (d *Daemon) resumeSession() bool {
+	d.mu.RLock()
+	c := d.client
+	paired := d.paired
+	d.mu.RUnlock()
+	if c == nil || !paired {
+		return false
+	}
+
+	d.log.Info().Msg("Pairing did not complete; resuming the stored session")
+	d.setState(wire.StateConnecting, "")
+	if err := c.Reconnect(context.Background()); err != nil {
+		d.log.Warn().Err(err).Msg("Could not resume the stored session")
+		return false
+	}
+	d.mu.Lock()
+	d.resumeGeneration++
+	d.mu.Unlock()
+	go d.initialSync()
+	return true
 }
 
 // validateGaiaCookies reports the specific cookies that are missing, since a

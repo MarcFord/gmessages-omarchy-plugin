@@ -125,6 +125,7 @@ func (d *Daemon) repairSession() bool {
 
 	d.mu.RLock()
 	before := d.pairGeneration
+	resumedBefore := d.resumeGeneration
 	d.mu.RUnlock()
 
 	if err := d.PairFromBrowser(); err != nil {
@@ -135,16 +136,23 @@ func (d *Daemon) repairSession() bool {
 	// Wait for the pairing itself to complete, not merely for the connection
 	// to look healthy: the long poll recovering on its own would otherwise be
 	// mistaken for success while the phone is still being asked to confirm.
-	for i := 0; i < 90; i++ {
+	// Wait as long as the pairing itself does: giving up sooner reports an
+	// error over the emoji the phone can still confirm.
+	for deadline := time.Now().Add(gaiaPairTimeout + 5*time.Second); time.Now().Before(deadline); {
 		time.Sleep(time.Second)
 
 		d.mu.RLock()
 		now := d.pairGeneration
+		resumed := d.resumeGeneration
 		state := d.status.State
 		d.mu.RUnlock()
 
 		if now != before {
 			d.log.Info().Msg("Re-paired successfully")
+			return true
+		}
+		// Pairing failed, but the stored session was picked up again.
+		if resumed != resumedBefore {
 			return true
 		}
 		// Pairing gave up or was rejected; stop waiting.

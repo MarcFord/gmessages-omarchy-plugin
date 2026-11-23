@@ -54,7 +54,10 @@ type Daemon struct {
 	// in flight, and treating that as success leaves the phone showing a
 	// prompt nobody is waiting for.
 	pairGeneration int
-	cookies        cookieRefresher
+	// resumeGeneration increments when a failed pairing falls back to the
+	// stored session, so an automatic re-pair can tell that apart from failure.
+	resumeGeneration int
+	cookies          cookieRefresher
 
 	// Maintenance starts either after a stored session connects or after a
 	// fresh pairing, whichever happens first, and must run exactly once. It is
