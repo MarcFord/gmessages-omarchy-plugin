@@ -182,7 +182,7 @@ func (d *Daemon) SetTyping(ctx context.Context, p wire.SetTypingParams) error {
 	if !p.Typing {
 		return nil
 	}
-	return c.SetTyping(ctx, p.ConversationID, nil)
+	return c.SetTyping(ctx, p.ConversationID, true, nil)
 }
 
 // Refresh re-pulls the conversation list from the phone.
@@ -192,7 +192,7 @@ func (d *Daemon) Refresh(ctx context.Context) error {
 		return err
 	}
 	resp, err := withAuthRetry(d, func() (*gmproto.ListConversationsResponse, error) {
-		return c.ListConversations(ctx, convListLimit, gmproto.ListConversationsRequest_INBOX)
+		return c.ListConversations(ctx, &gmproto.ListConversationsRequest{Count: convListLimit, Folder: gmproto.ListConversationsRequest_INBOX})
 	})
 	if err != nil {
 		return fmt.Errorf("list conversations: %w", err)
@@ -222,7 +222,7 @@ func (d *Daemon) StartPairing() (string, error) {
 	if c == nil {
 		return "", errors.New("client not initialised")
 	}
-	qr, err := c.StartLogin()
+	qr, err := c.StartLogin(context.Background())
 	if err != nil {
 		d.setState(wire.StateError, err.Error())
 		return "", fmt.Errorf("start pairing: %w", err)
