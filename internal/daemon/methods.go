@@ -192,7 +192,10 @@ func (d *Daemon) Refresh(ctx context.Context) error {
 		return err
 	}
 	resp, err := withAuthRetry(d, func() (*gmproto.ListConversationsResponse, error) {
-		return c.ListConversations(ctx, convListLimit, gmproto.ListConversationsRequest_INBOX)
+		return c.ListConversations(ctx, &gmproto.ListConversationsRequest{
+			Count:  convListLimit,
+			Folder: gmproto.ListConversationsRequest_INBOX,
+		})
 	})
 	if err != nil {
 		return fmt.Errorf("list conversations: %w", err)
@@ -215,14 +218,14 @@ const qrMaxRefreshes = 20
 // StartPairing registers a new browser relay and returns a QR payload for the
 // plugin to render. Scanning it in Messages > Device pairing completes it, and
 // the PairSuccessful event persists the session.
-func (d *Daemon) StartPairing() (string, error) {
+func (d *Daemon) StartPairing(ctx context.Context) (string, error) {
 	d.mu.RLock()
 	c := d.client
 	d.mu.RUnlock()
 	if c == nil {
 		return "", errors.New("client not initialised")
 	}
-	qr, err := c.StartLogin()
+	qr, err := c.StartLogin(ctx)
 	if err != nil {
 		d.setState(wire.StateError, err.Error())
 		return "", fmt.Errorf("start pairing: %w", err)

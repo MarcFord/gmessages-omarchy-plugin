@@ -271,7 +271,7 @@ func (d *Daemon) dispatch(ctx context.Context, req wire.Request) wire.Response {
 		return ok(nil)
 
 	case wire.MethodStartPairing:
-		qr, err := d.StartPairing()
+		qr, err := d.StartPairing(ctx)
 		if err != nil {
 			return fail(err)
 		}
